@@ -36,6 +36,7 @@ class TestPresentationBranch:
             ("scoring_done", SessionState.PROMPT_BUILDING),
             ("prompt_built", SessionState.REASONING),
             ("reasoning_done", SessionState.REPORT_GENERATED),
+            ("start_recommending", SessionState.RECOMMENDING),
             ("finalize", SessionState.COMPLETED),
         ]:
             state = next_state(mode, state, event)
@@ -83,3 +84,15 @@ class TestLegalEvents:
     def test_waiting_for_video_lists_upload_video(self) -> None:
         events = legal_events(EvaluationMode.PRESENTATION, SessionState.WAITING_FOR_VIDEO)
         assert events == ["upload_video"]
+
+
+class TestRecommendingStage:
+    def test_report_generated_requires_start_recommending(self) -> None:
+        assert legal_events(EvaluationMode.PRESENTATION, SessionState.REPORT_GENERATED) == ["start_recommending"]
+
+    def test_recommending_requires_finalize(self) -> None:
+        assert legal_events(EvaluationMode.PRESENTATION, SessionState.RECOMMENDING) == ["finalize"]
+
+    def test_cannot_finalize_directly_from_report_generated(self) -> None:
+        with pytest.raises(InvalidTransitionError):
+            next_state(EvaluationMode.PRESENTATION, SessionState.REPORT_GENERATED, "finalize")

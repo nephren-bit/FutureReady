@@ -3,17 +3,18 @@ services/prompt_builder.py
 
 Layer 5 — Prompt Builder service.
 
-Thin service facade over `prompts/evaluation_prompt.py` and
-`prompts/preliminary_prompt.py`. Routers never import from `prompts/`
-directly and never construct prompt text themselves; they call
-`PromptBuilder` (indirectly, via `EvaluationWorkflowManager`), which
-receives a `UnifiedFeatureModel` plus the already-computed `ScoreBreakdown`
-(and, for the final task, `DerivedFeatures`) and returns the finished
+Thin service facade over `prompts/evaluation_prompt.py`,
+`prompts/preliminary_prompt.py`, and `prompts/recommendation_prompt.py`.
+Routers never import from `prompts/` directly and never construct prompt
+text themselves; they call `PromptBuilder` (indirectly, via
+`EvaluationWorkflowManager` / `RecommendationEngine`), which receives
+already-computed structured data (a `UnifiedFeatureModel`, a
+`ScoreBreakdown`, a candidate resource list, etc.) and returns the finished
 prompt string for the reasoning engine.
 
 Kept as its own service (rather than inlining prompt construction) so
 future task types can be added here as new methods without touching the
-orchestrator, workflow manager, or routers.
+orchestrator, workflow manager, recommendation engine, or routers.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from models.features import DerivedFeatures, ScoreBreakdown, UnifiedFeatureModel
 from models.responses import ReasoningPayload
 from prompts.evaluation_prompt import build_evaluation_prompt
 from prompts.preliminary_prompt import build_preliminary_prompt
+from prompts.recommendation_prompt import build_recommendation_prompt
 
 
 class PromptTask(str, Enum):
@@ -34,6 +36,9 @@ class PromptTask(str, Enum):
 
     PRELIMINARY = "preliminary"
     """Single-material preliminary review (slide, resume, or video) — see `build_preliminary`."""
+
+    RECOMMEND = "recommend"
+    """Learning-resource recommendation picks from a closed candidate list — see `build_recommendation`."""
 
 
 class PromptBuilder:
@@ -53,7 +58,8 @@ class PromptBuilder:
 
         Args:
             task: Must be `PromptTask.EVALUATE` (use `build_preliminary` for
-                single-material preliminary reviews).
+                single-material preliminary reviews, `build_recommendation`
+                for learning-resource picks).
             features: The full unified feature set.
             scores: The deterministic score breakdown.
             derived: The cross-modal derived features.
@@ -96,6 +102,29 @@ class PromptBuilder:
             The finished prompt string.
         """
         return build_preliminary_prompt(stage, features, scores, language=language)
+
+    def build_recommendation(
+        self,
+        scores: ScoreBreakdown,
+        reasoning: ReasoningPayload,
+        candidates: list[dict],
+        language: str = "vi",
+    ) -> str:
+        """
+        Build a learning-resource recommendation prompt.
+
+        Args:
+            scores: The session's final `ScoreBreakdown`.
+            reasoning: The session's final `ReasoningPayload`.
+            candidates: The closed candidate resource list the reasoning
+                engine may pick from (see
+                `services.recommendation_engine.RecommendationEngine.build_prompt`).
+            language: Output language code ("vi" or "en").
+
+        Returns:
+            The finished prompt string.
+        """
+        return build_recommendation_prompt(scores, reasoning, candidates, language=language)
 
 
 prompt_builder = PromptBuilder()

@@ -7,9 +7,9 @@
 # touching EvaluationWorkflowManager, FeatureFusionEngine, ScoringEngine,
 # or any API contract.
 #
-# Supported values for reasoning_engine today: gemini
-# (Claude / GPT / a local model / a fine-tuned model can be added later by
-# registering a new BaseReasoningEngine implementation in
-# providers/registry.py and pointing this key at its name.)
+# Supported values for reasoning_engine today: gemini, claude, lmstudio
+# (GPT or a fine-tuned model can be added later by registering a new
+# BaseReasoningEngine implementation in providers/registry.py and pointing
+# this key at its name.)
 
-reasoning_engine: gemini
+reasoning_engine: lmstudio

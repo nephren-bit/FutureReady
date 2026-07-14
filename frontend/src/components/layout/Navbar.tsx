@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { House, Plus, List, X } from '@phosphor-icons/react'
+import { House, Plus, List, Microphone, X } from '@phosphor-icons/react'
 import { cn } from '../../lib/utils'
 
 const navLinks = [
   { to: '/app', label: 'Bảng điều khiển', icon: List },
   { to: '/app/new', label: 'Phiên mới', icon: Plus },
+  { to: '/app/practice', label: 'Luyện tập', icon: Microphone },
 ]
 
 export default function Navbar() {

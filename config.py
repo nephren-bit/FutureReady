@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 from typing import Final
 
+import yaml
 from dotenv import load_dotenv
 
 # Load environment variables from a .env file located at the project root.
@@ -30,6 +31,14 @@ class Settings:
     Attributes:
         GEMINI_API_KEY: API key used to authenticate with the Gemini API.
         GEMINI_MODEL: Name of the Gemini model to use for all requests.
+        ANTHROPIC_API_KEY: API key used to authenticate with the Claude API.
+        CLAUDE_MODEL: Name of the Claude model to use for all requests.
+        LMSTUDIO_BASE_URL: Base URL of a local LM Studio server's
+            OpenAI-compatible API (see https://lmstudio.ai/docs/local-server).
+        LMSTUDIO_API_KEY: Dummy credential -- LM Studio's local server doesn't
+            validate it, but the `openai` SDK requires a non-empty string.
+        LMSTUDIO_MODEL: Exact identifier of the model currently loaded in LM
+            Studio (see the "My Models" tab, or `GET {LMSTUDIO_BASE_URL}/models`).
         WHISPER_MODEL_SIZE: OpenAI Whisper model size used for speech-to-text
             (tiny/base/small/medium/large). Larger models are more accurate
             but slower and heavier to load.
@@ -59,6 +68,13 @@ class Settings:
 
     GEMINI_API_KEY: Final[str] = os.getenv("GEMINI_API_KEY", "")
     GEMINI_MODEL: Final[str] = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
+    ANTHROPIC_API_KEY: Final[str] = os.getenv("ANTHROPIC_API_KEY", "")
+    CLAUDE_MODEL: Final[str] = os.getenv("CLAUDE_MODEL", "claude-sonnet-5")
+
+    LMSTUDIO_BASE_URL: Final[str] = os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
+    LMSTUDIO_API_KEY: Final[str] = os.getenv("LMSTUDIO_API_KEY", "lm-studio")
+    LMSTUDIO_MODEL: Final[str] = os.getenv("LMSTUDIO_MODEL", "")
 
     WHISPER_MODEL_SIZE: Final[str] = os.getenv("WHISPER_MODEL_SIZE", "base")
     HSEMOTION_MODEL_NAME: Final[str] = os.getenv("HSEMOTION_MODEL_NAME", "enet_b0_8_best_afew")
@@ -91,15 +107,44 @@ class Settings:
         """
         Validate that required settings are present.
 
+        Only requires the API key for whichever `reasoning_engine` is
+        currently selected in `config/providers.yaml` -- e.g. switching to
+        `claude` there means `GEMINI_API_KEY` is no longer mandatory. See
+        `providers/registry.py`, which reads the same file to decide which
+        `BaseReasoningEngine` implementation to construct.
+
         Raises:
-            RuntimeError: If a mandatory setting (e.g. GEMINI_API_KEY) is missing.
+            RuntimeError: If the active engine's API key is missing.
         """
-        if not self.GEMINI_API_KEY:
+        engine = self._configured_reasoning_engine()
+        if engine == "claude" and not self.ANTHROPIC_API_KEY:
+            raise RuntimeError(
+                "ANTHROPIC_API_KEY is not set. Please create a .env file based on "
+                ".env.example and set your Anthropic API key."
+            )
+        if engine == "gemini" and not self.GEMINI_API_KEY:
             raise RuntimeError(
                 "GEMINI_API_KEY is not set. Please create a .env file based on "
                 ".env.example and set your Gemini API key."
             )
+        if engine == "lmstudio" and not self.LMSTUDIO_MODEL:
+            raise RuntimeError(
+                "LMSTUDIO_MODEL is not set. Please create a .env file based on "
+                ".env.example and set it to the exact model identifier currently "
+                "loaded in LM Studio (see the \"My Models\" tab, or "
+                f"GET {self.LMSTUDIO_BASE_URL}/models)."
+            )
         self.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _configured_reasoning_engine() -> str:
+        """Reads `reasoning_engine` out of `config/providers.yaml` (defaults to `gemini`)."""
+        config_path = Path(__file__).resolve().parent / "config" / "providers.yaml"
+        if not config_path.exists():
+            return "gemini"
+        with open(config_path, encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        return data.get("reasoning_engine", "gemini")
 
 
 settings = Settings()

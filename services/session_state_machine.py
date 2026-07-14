@@ -85,7 +85,9 @@ _TRANSITIONS: dict[tuple[EvaluationMode | None, SessionState], dict[str, Session
     # Video upload -> analysis -> its own preliminary score + reasoning,
     # exactly mirroring the slide/resume branches, then a FINAL synthesis
     # pass (Feature Fusion -> Scoring -> Prompt -> Reasoning) that
-    # reconciles the two preliminary evaluations into one report.
+    # reconciles the two preliminary evaluations into one report, and
+    # finally a Recommendation Engine pass that picks learning resources
+    # targeted at the session's weakest areas before the session completes.
     (None, SessionState.WAITING_FOR_VIDEO): {
         "upload_video": SessionState.VIDEO_UPLOADED,
     },
@@ -120,6 +122,9 @@ _TRANSITIONS: dict[tuple[EvaluationMode | None, SessionState], dict[str, Session
         "reasoning_done": SessionState.REPORT_GENERATED,
     },
     (None, SessionState.REPORT_GENERATED): {
+        "start_recommending": SessionState.RECOMMENDING,
+    },
+    (None, SessionState.RECOMMENDING): {
         "finalize": SessionState.COMPLETED,
     },
 }

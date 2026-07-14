@@ -3,11 +3,11 @@ services/workflow_manager.py
 
 `EvaluationWorkflowManager` — the sole orchestration layer for the
 session-centric platform. Routers never call `AIOrchestrator`,
-`FeatureFusionEngine`, `ScoringEngine`, `PromptBuilder`, or any reasoning
-engine directly; they only ever call methods on this class, passing a
-DB `Session` and an `AnalysisSession.id`.
+`FeatureFusionEngine`, `ScoringEngine`, `PromptBuilder`, `RecommendationEngine`,
+or any reasoning engine directly; they only ever call methods on this
+class, passing a DB `Session` and an `AnalysisSession.id`.
 
-Pipeline shape (per material, then a final synthesis pass):
+Pipeline shape (per material, then a final synthesis + recommendation pass):
 
     upload material -> analyze (Layer 1/2) -> PRELIMINARY score (Layer 4,
     material-only) -> PRELIMINARY reasoning (Layer 6, material-only) ->
@@ -19,9 +19,11 @@ per-material pipeline. Once video's preliminary evaluation completes, the
 shared FINAL synthesis pass runs: Feature Fusion over the FULL merged
 features, a full `ScoreBreakdown` (with `overall_score` recombined from the
 two preliminary `overall_score`s — see `_combine_preliminary_overall_score`),
-and a final reasoning pass that is given both preliminary `ReasoningPayload`s
-as context so it reconciles them into one report instead of reasoning over
-the raw data as if from scratch.
+a final reasoning pass that is given both preliminary `ReasoningPayload`s as
+context so it reconciles them into one report instead of reasoning over the
+raw data as if from scratch, and finally a Recommendation Engine pass
+(`RECOMMENDING` state) that picks learning resources from the seeded
+`learning_resources` catalog targeted at the session's weakest areas.
 
 Responsibilities:
     * Validate and apply state-machine transitions (`session_state_machine.py`)
@@ -51,18 +53,20 @@ from db.models import (
     EvaluationMode,
     EvaluationStage,
     PreliminaryEvaluationORM,
+    RecommendationORM,
     ReportORM,
     ScoreResultORM,
     SessionState,
     UnifiedFeatureORM,
 )
 from models.features import ScoreBreakdown, UnifiedFeatureModel
-from models.responses import ReasoningPayload
+from models.responses import RecommendationPayload, ReasoningPayload
 from providers.registry import provider_registry
 from services import session_mappers as mappers
 from services.ai_orchestrator import AIOrchestrator, ai_orchestrator
 from services.feature_fusion import FeatureFusionEngine
 from services.prompt_builder import PromptBuilder, PromptTask, prompt_builder
+from services.recommendation_engine import RecommendationEngine, recommendation_engine
 from services.scoring_engine import ScoringEngine
 from services.session_state_machine import InvalidTransitionError, next_state
 from utils.logger import get_logger
@@ -93,12 +97,13 @@ _ANALYSIS_RETRY_STATES = {
     SessionState.VIDEO_ANALYZING: "video",
 }
 # States whose retry entry point re-enters the final synthesis tail (cheap,
-# deterministic except for the reasoning-engine call in REASONING).
+# deterministic except for the reasoning-engine calls in REASONING/RECOMMENDING).
 _TAIL_RETRY_STATES = {
     SessionState.FEATURE_FUSION,
     SessionState.SCORING,
     SessionState.PROMPT_BUILDING,
     SessionState.REASONING,
+    SessionState.RECOMMENDING,
 }
 
 
@@ -123,11 +128,13 @@ class EvaluationWorkflowManager:
         fusion_engine: FeatureFusionEngine | None = None,
         scoring_engine: ScoringEngine | None = None,
         builder: PromptBuilder | None = None,
+        rec_engine: RecommendationEngine | None = None,
     ) -> None:
         self._orchestrator = orchestrator or ai_orchestrator
         self._fusion_engine = fusion_engine or FeatureFusionEngine()
         self._scoring_engine = scoring_engine or ScoringEngine()
         self._prompt_builder = builder or prompt_builder
+        self._recommendation_engine = rec_engine or recommendation_engine
 
     # ------------------------------------------------------------------
     # Lookup / lifecycle
@@ -139,6 +146,13 @@ class EvaluationWorkflowManager:
             raise SessionNotFoundError(f"No session with id={session_id}")
         return session
 
+    def list_sessions(self, db: DBSession) -> list[AnalysisSession]:
+        return (
+            db.query(AnalysisSession)
+            .order_by(AnalysisSession.created_at.desc())
+            .all()
+        )
+
     def create_session(self, db: DBSession, mode: EvaluationMode, language: str = "vi") -> AnalysisSession:
         session = AnalysisSession(mode=mode, state=SessionState.EMPTY, language=language)
         db.add(session)
@@ -149,7 +163,7 @@ class EvaluationWorkflowManager:
 
     def delete_session(self, db: DBSession, session_id: uuid.UUID) -> None:
         session = self.get_session(db, session_id)
-        db.delete(session)  # cascades to every feature/score/report/preliminary row
+        db.delete(session)  # cascades to every feature/score/report/preliminary/recommendation row
         db.commit()
         logger.info("Deleted session %s", session_id)
 
@@ -172,6 +186,11 @@ class EvaluationWorkflowManager:
                 f"(state={session.state.value})."
             )
         return row
+
+    def get_recommendations(self, db: DBSession, session_id: uuid.UUID) -> list[RecommendationORM]:
+        """Returns the session's recommendations, ranked. Empty (not an error) if none were generated."""
+        session = self.get_session(db, session_id)
+        return sorted(session.recommendations, key=lambda rec: rec.rank)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -319,20 +338,43 @@ class EvaluationWorkflowManager:
             video_feature, emotion_feature, facemesh_feature = await asyncio.to_thread(
                 self._orchestrator.analyze_video_vision, session.video_file_path
             )
-            speech_intelligence = await asyncio.to_thread(
-                self._orchestrator.analyze_speech, session.video_file_path
-            )
-            transcript_feature = await asyncio.to_thread(
-                self._orchestrator.analyze_transcript, speech_intelligence.transcript
-            )
+
+            # A silent/audio-less video is a legitimate upload, not a failure
+            # of the pipeline -- mirrors the same graceful skip
+            # `AIOrchestrator.build_unified_features` already does when a
+            # video has no usable audio track. Only this sub-step is
+            # sandboxed: `analyze_speech` always wraps every failure
+            # (missing audio stream, corrupt file, ffmpeg error, ...) as a
+            # `RuntimeError`, so video/emotion/face-mesh scoring still
+            # proceeds on speech/transcript alone being unavailable.
+            speech_intelligence = None
+            transcript_feature = None
+            try:
+                speech_intelligence = await asyncio.to_thread(
+                    self._orchestrator.analyze_speech, session.video_file_path
+                )
+                transcript_feature = await asyncio.to_thread(
+                    self._orchestrator.analyze_transcript, speech_intelligence.transcript
+                )
+            except RuntimeError as exc:
+                logger.warning(
+                    "Session %s: no usable speech track in the video (%s); "
+                    "skipping speech/transcript scoring for this material.",
+                    session.id,
+                    exc,
+                )
 
             db.add(mappers.video_to_orm(session.id, video_feature))
             db.add(mappers.emotion_to_orm(session.id, emotion_feature))
             db.add(mappers.facemesh_to_orm(session.id, facemesh_feature))
-            speech_row = mappers.speech_to_orm(session.id, speech_intelligence)
-            db.add(speech_row)
-            db.flush()  # assign speech_row.id before linking the transcript row to it
-            db.add(mappers.transcript_to_orm(session.id, transcript_feature, speech_feature_id=speech_row.id))
+            if speech_intelligence is not None:
+                speech_row = mappers.speech_to_orm(session.id, speech_intelligence)
+                db.add(speech_row)
+                db.flush()  # assign speech_row.id before linking the transcript row to it
+                if transcript_feature is not None:
+                    db.add(
+                        mappers.transcript_to_orm(session.id, transcript_feature, speech_feature_id=speech_row.id)
+                    )
 
             self._transition(session, "video_analysis_done")
             db.commit()
@@ -449,7 +491,7 @@ class EvaluationWorkflowManager:
         return session
 
     # ------------------------------------------------------------------
-    # Final synthesis: Feature Fusion -> Scoring -> Prompt -> Reasoning
+    # Final synthesis: Feature Fusion -> Scoring -> Prompt -> Reasoning -> Recommend
     # ------------------------------------------------------------------
 
     def _hydrate_unified_features(self, session: AnalysisSession) -> UnifiedFeatureModel:
@@ -514,14 +556,53 @@ class EvaluationWorkflowManager:
             for pe in session.preliminary_evaluations
         }
 
+    async def _run_recommendations(
+        self, db: DBSession, session: AnalysisSession, scores: ScoreBreakdown, reasoning: ReasoningPayload
+    ) -> None:
+        """
+        Run the Recommendation Engine against the session's final
+        scores/reasoning and persist `RecommendationORM` rows. Tolerant of
+        an empty/unseeded `learning_resources` catalog (logs and returns
+        with zero recommendations rather than failing the whole session —
+        see `scripts/seed_learning_resources.py`).
+        """
+        candidates = self._recommendation_engine.candidate_resources(db)
+        if not candidates:
+            logger.warning(
+                "No active learning_resources rows found; skipping recommendation generation for "
+                "session %s (run scripts/seed_learning_resources.py to populate the catalog).",
+                session.id,
+            )
+            return
+
+        prompt = self._recommendation_engine.build_prompt(scores, reasoning, candidates, language=session.language)
+        engine = provider_registry.get_reasoning_engine()
+        payload: RecommendationPayload = await engine.generate_structured(prompt, RecommendationPayload)
+        picks = self._recommendation_engine.validate_picks(payload, candidates)
+
+        for rank, (resource, rationale, target_tags) in enumerate(picks, start=1):
+            db.add(
+                RecommendationORM(
+                    session_id=session.id,
+                    resource_id=resource.id,
+                    rank=rank,
+                    rationale=rationale,
+                    target_skill_tags=target_tags,
+                    generated_by="llm",
+                    reasoning_engine_name=engine.name,
+                    reasoning_engine_version=engine.version,
+                )
+            )
+        db.commit()
+
     async def _run_final_synthesis(self, db: DBSession, session: AnalysisSession) -> AnalysisSession:
         """
-        Run Feature Fusion -> Scoring -> Prompt Building -> Reasoning over
-        the FULL merged features, reconciling the preliminary evaluations
-        into one final report. Safe to call again on retry: each stage is
-        skipped if its output row already exists, except Prompt Building
-        (ephemeral, always rebuilt) and Reasoning (re-run only if no
-        `ReportORM` exists yet).
+        Run Feature Fusion -> Scoring -> Prompt Building -> Reasoning ->
+        Recommending over the FULL merged features, reconciling the
+        preliminary evaluations into one final report and then picking
+        learning resources targeted at the session's weakest areas. Safe to
+        call again on retry: each stage is skipped if its output already
+        exists, except Prompt Building (ephemeral, always rebuilt).
         """
         try:
             features = self._hydrate_unified_features(session)
@@ -611,8 +692,27 @@ class EvaluationWorkflowManager:
                 )
                 self._transition(session, "reasoning_done")
                 db.commit()
+                db.refresh(session)
+            else:
+                report_row = session.report
+                reasoning = ReasoningPayload(
+                    strengths=report_row.strengths,
+                    weaknesses=report_row.weaknesses,
+                    improvement_plan=report_row.improvement_plan,
+                    presentation_feedback=report_row.presentation_feedback,
+                    interview_feedback=report_row.interview_feedback,
+                    interview_questions=report_row.interview_questions,
+                    suggestions=report_row.suggestions,
+                )
 
-            if session.state is SessionState.REPORT_GENERATED:
+            if not session.recommendations:
+                if session.state is SessionState.REPORT_GENERATED:
+                    self._transition(session, "start_recommending")
+                    db.commit()
+                await self._run_recommendations(db, session, scores, reasoning)
+                db.refresh(session)
+
+            if session.state is SessionState.RECOMMENDING:
                 self._transition(session, "finalize")
                 db.commit()
 
@@ -634,8 +734,8 @@ class EvaluationWorkflowManager:
         already-uploaded file (never re-uploaded). Preliminary-evaluation
         failures (`*_ANALYZED`, i.e. the material finished analysis but its
         scoring/reasoning pass failed) re-run just that pass. Final-synthesis
-        failures (Fusion/Scoring/Prompt/Reasoning) resume via
-        `_run_final_synthesis`, which skips any stage whose output row was
+        failures (Fusion/Scoring/Prompt/Reasoning/Recommending) resume via
+        `_run_final_synthesis`, which skips any stage whose output was
         already persisted before the failure occurred.
         """
         session = self.get_session(db, session_id)

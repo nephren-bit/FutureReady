@@ -20,7 +20,14 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from db.models import AnalysisSession, EvaluationMode, EvaluationStage, PreliminaryEvaluationORM, SessionState
+from db.models import (
+    AnalysisSession,
+    EvaluationMode,
+    EvaluationStage,
+    PreliminaryEvaluationORM,
+    RecommendationORM,
+    SessionState,
+)
 from models.features import DerivedFeatures, ScoreBreakdown
 from models.responses import ReasoningPayload
 from services.session_state_machine import legal_events
@@ -33,6 +40,8 @@ __all__ = [
     "SessionResponse",
     "SessionReportResponse",
     "PreliminaryEvaluationResponse",
+    "RecommendationItemResponse",
+    "RecommendationListResponse",
 ]
 
 
@@ -145,4 +154,57 @@ class PreliminaryEvaluationResponse(BaseModel):
             reasoning_engine_name=row.reasoning_engine_name,
             reasoning_engine_version=row.reasoning_engine_version,
             generated_at=row.generated_at,
+        )
+
+
+class RecommendationItemResponse(BaseModel):
+    """One ranked learning-resource pick within `RecommendationListResponse`."""
+
+    resource_title: str
+    resource_url: str
+    resource_type: str
+    platform: str | None = None
+    language: str | None = None
+    speaker: str | None = None
+    rank: int
+    rationale: str
+    target_skill_tags: list[str] = Field(default_factory=list)
+
+    @classmethod
+    def from_orm_row(cls, row: RecommendationORM) -> "RecommendationItemResponse":
+        return cls(
+            resource_title=row.resource.title,
+            resource_url=row.resource.url,
+            resource_type=row.resource.resource_type,
+            platform=row.resource.platform,
+            language=row.resource.language,
+            speaker=row.resource.speaker,
+            rank=row.rank,
+            rationale=row.rationale,
+            target_skill_tags=row.target_skill_tags,
+        )
+
+
+class RecommendationListResponse(BaseModel):
+    """
+    Response for `GET /sessions/{id}/recommendations` -- the ranked learning
+    resources the Recommendation Engine picked for this session, generated
+    automatically once the final report exists (see the `RECOMMENDING`
+    state in `services/session_state_machine.py` and
+    `services/recommendation_engine.py`). `recommendations` may be an empty
+    list if the `learning_resources` catalog had not been seeded yet when
+    this session completed (see `scripts/seed_learning_resources.py`) --
+    that is not an error, just nothing to suggest.
+    """
+
+    session_id: uuid.UUID
+    recommendations: list[RecommendationItemResponse]
+    generated_by: str | None = None
+
+    @classmethod
+    def from_orm_rows(cls, session_id: uuid.UUID, rows: list[RecommendationORM]) -> "RecommendationListResponse":
+        return cls(
+            session_id=session_id,
+            recommendations=[RecommendationItemResponse.from_orm_row(row) for row in rows],
+            generated_by=rows[0].generated_by if rows else None,
         )

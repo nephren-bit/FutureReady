@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { motion } from 'motion/react'
-import { Plus, FileText, VideoCamera, Trash, ArrowClockwise } from '@phosphor-icons/react'
+import { Plus, FileText, VideoCamera, Microphone, Trash, ArrowClockwise } from '@phosphor-icons/react'
 import { listSessions, deleteSession, retrySession } from '../lib/api'
 import { cn } from '../lib/utils'
 import type { Session, SessionState } from '../types'
@@ -17,18 +17,10 @@ function formatDate(iso: string): string {
   }).format(new Date(iso))
 }
 
-function truncatePath(path: string | undefined): string {
-  if (!path) return ''
-  const parts = path.split('/')
-  const name = parts[parts.length - 1]
-  if (name.length <= 40) return name
-  return name.slice(0, 37) + '...'
-}
-
 function stateColor(state: SessionState): string {
-  if (state === 'COMPLETED') return 'bg-success-light text-success'
-  if (state === 'FAILED') return 'bg-error-light text-error'
-  if (state === 'CREATED' || state === 'PENDING_UPLOAD') return 'bg-surface-elevated text-text-secondary'
+  if (state === 'completed') return 'bg-success-light text-success'
+  if (state === 'failed') return 'bg-error-light text-error'
+  if (state === 'empty') return 'bg-surface-elevated text-text-secondary'
   return 'bg-accent-light text-accent'
 }
 
@@ -54,7 +46,6 @@ function SkeletonCard() {
 }
 
 export default function Dashboard() {
-  const navigate = useNavigate()
   const [sessions, setSessions] = useState<Session[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -119,22 +110,36 @@ export default function Dashboard() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, ease: 'easeOut' }}
       >
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-8">
           <h1 className="text-2xl sm:text-3xl font-semibold text-text-primary">
             Bảng điều khiển
           </h1>
-          <Link
-            to="/app/new"
-            className={cn(
-              'inline-flex items-center gap-2 px-4 py-2.5 rounded-lg',
-              'bg-accent text-white font-medium text-sm',
-              'hover:bg-accent-hover transition-colors duration-200',
-              'focus:outline-none focus:ring-2 focus:ring-accent/40 focus:ring-offset-2'
-            )}
-          >
-            <Plus size={18} weight="bold" />
-            Phiên mới
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link
+              to="/app/practice"
+              className={cn(
+                'inline-flex items-center gap-2 px-4 py-2.5 rounded-lg',
+                'bg-surface-elevated text-text-secondary font-medium text-sm border border-border',
+                'hover:text-text-primary hover:border-accent/40 transition-colors duration-200',
+                'focus:outline-none focus:ring-2 focus:ring-accent/40 focus:ring-offset-2'
+              )}
+            >
+              <Microphone size={18} weight="bold" />
+              Luyện tập nhanh
+            </Link>
+            <Link
+              to="/app/new"
+              className={cn(
+                'inline-flex items-center gap-2 px-4 py-2.5 rounded-lg',
+                'bg-accent text-white font-medium text-sm',
+                'hover:bg-accent-hover transition-colors duration-200',
+                'focus:outline-none focus:ring-2 focus:ring-accent/40 focus:ring-offset-2'
+              )}
+            >
+              <Plus size={18} weight="bold" />
+              Phiên mới
+            </Link>
+          </div>
         </div>
 
         {loading && (
@@ -226,7 +231,7 @@ export default function Dashboard() {
                       </span>
                     </div>
                     <div className="flex items-center gap-1">
-                      {(session.state === 'FAILED' || session.state === 'CREATED') && (
+                      {session.state === 'failed' && (
                         <button
                           onClick={(e) => handleRetry(e, session.id)}
                           disabled={retryingId === session.id}
@@ -271,16 +276,16 @@ export default function Dashboard() {
 
                   <div className="space-y-1 text-xs text-text-muted">
                     <p>{formatDate(session.created_at)}</p>
-                    {(session.slide_path || session.resume_path) && (
+                    {(session.has_slide || session.has_resume) && (
                       <p className="flex items-center gap-1">
                         <FileText size={12} />
-                        {truncatePath(session.slide_path || session.resume_path)}
+                        {session.mode === 'presentation' ? 'Đã tải slide' : 'Đã tải CV'}
                       </p>
                     )}
-                    {session.video_path && (
+                    {session.has_video && (
                       <p className="flex items-center gap-1">
                         <VideoCamera size={12} />
-                        {truncatePath(session.video_path)}
+                        Đã tải video
                       </p>
                     )}
                   </div>

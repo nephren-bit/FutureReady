@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard'
 import NewSession from './pages/NewSession'
 import SessionDetail from './pages/SessionDetail'
 import Report from './pages/Report'
+import Practice from './pages/Practice'
 
 export default function App() {
   return (
@@ -22,6 +23,7 @@ export default function App() {
                   <Routes>
                     <Route index element={<Dashboard />} />
                     <Route path="new" element={<NewSession />} />
+                    <Route path="practice" element={<Practice />} />
                     <Route path="sessions/:id" element={<SessionDetail />} />
                     <Route path="sessions/:id/report" element={<Report />} />
                   </Routes>

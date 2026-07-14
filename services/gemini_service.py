@@ -24,6 +24,18 @@ import json
 import re
 from typing import Any, TypeVar
 
+# Must run before `google.genai` (and the `requests`/urllib3 stack it calls
+# into) creates any SSL context. Swaps in the OS certificate store (Windows
+# Certificate Store / macOS Keychain / OpenSSL on Linux) instead of the
+# `certifi` bundle, so locally-trusted root CAs are honored too -- e.g. the
+# self-signed root many antivirus products (AVG, Avast, Kaspersky, ESET...)
+# inject when doing HTTPS/TLS scanning, which is trusted by Windows and
+# browsers but not by `certifi`, and otherwise fails with
+# "CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate".
+import truststore
+
+truststore.inject_into_ssl()
+
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, ValidationError

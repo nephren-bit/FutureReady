@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { motion } from 'motion/react'
-import { ArrowLeft, CheckCircle, XCircle, Lightbulb, Warning, TrendUp } from '@phosphor-icons/react'
+import { ArrowLeft, CheckCircle, XCircle, Lightbulb, Warning, TrendUp, Question } from '@phosphor-icons/react'
 import { getReport } from '../lib/api'
 import { cn } from '../lib/utils'
 import type { EvaluationReport, ScoreBreakdown, DerivedFeatures } from '../types'
@@ -10,14 +10,14 @@ import ScoreBar from '../components/charts/ScoreBar'
 
 const SCORE_LABELS: Record<string, string> = {
   resume_score: 'CV',
-  slide_content_score: 'Nội dung Slide',
-  slide_visual_score: 'Hình ảnh Slide',
-  speech_delivery_score: 'Giọng nói',
-  transcript_quality_score: 'Chất lượng nội dung',
-  body_language_score: 'Ngôn ngữ cơ thể',
-  emotional_confidence_score: 'Tự tin cảm xúc',
-  presentation_readiness: 'Sẵn sàng thuyết trình',
-  interview_readiness: 'Sẵn sàng phỏng vấn',
+  slide_score: 'Slide',
+  speech_score: 'Giọng nói',
+  transcript_score: 'Chất lượng nội dung',
+  emotion_score: 'Cảm xúc',
+  eye_contact_score: 'Giao tiếp bằng mắt',
+  voice_confidence_score: 'Tự tin giọng nói',
+  presentation_score: 'Thuyết trình',
+  communication_score: 'Giao tiếp',
 }
 
 const DERIVED_LABELS: Record<keyof DerivedFeatures, string> = {
@@ -67,7 +67,7 @@ const sectionAnim = {
   initial: { opacity: 0, y: 24 },
   whileInView: { opacity: 1, y: 0 },
   viewport: { once: true },
-  transition: { duration: 0.5, ease: 'easeOut' },
+  transition: { duration: 0.5, ease: 'easeOut' as const },
 }
 
 function Skeleton() {
@@ -193,7 +193,7 @@ export default function Report() {
 
           {Object.keys(filteredScores).length > 0 && (
             <div className="w-full md:w-auto md:flex-1">
-              <ScoreRadar scores={report.scores} />
+              <ScoreRadar scores={filteredScores} />
             </div>
           )}
         </div>

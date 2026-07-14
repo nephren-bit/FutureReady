@@ -23,7 +23,9 @@ from typing import Callable
 import yaml
 
 from services.reasoning.base import BaseReasoningEngine
+from services.reasoning.claude_engine import ClaudeReasoningEngine
 from services.reasoning.gemini_engine import GeminiReasoningEngine
+from services.reasoning.lmstudio_engine import LMStudioReasoningEngine
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -35,6 +37,8 @@ _DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "prov
 # selectable without touching any other file.
 _REASONING_ENGINE_FACTORIES: dict[str, Callable[[], BaseReasoningEngine]] = {
     "gemini": GeminiReasoningEngine,
+    "claude": ClaudeReasoningEngine,
+    "lmstudio": LMStudioReasoningEngine,
 }
 
 

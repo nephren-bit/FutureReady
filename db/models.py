@@ -75,9 +75,13 @@ class SessionState(str, enum.Enum):
     `PreliminaryEvaluationORM` row, and shown to the user immediately via
     `GET /sessions/{id}/preliminary/{stage}` — the user does not have to
     wait for the video to see feedback on their slides/resume. The shared
-    tail (`FEATURE_FUSION` -> ... -> `COMPLETED`) then produces the final,
-    synthesized report, which reconciles the preliminary assessments rather
-    than reasoning over the raw data from scratch.
+    tail (`FEATURE_FUSION` -> ... -> `REPORT_GENERATED`) then produces the
+    final, synthesized report, which reconciles the preliminary assessments
+    rather than reasoning over the raw data from scratch. `RECOMMENDING`
+    runs once the report exists: an LLM-driven Recommendation Engine picks
+    learning resources from `learning_resources` (seeded from curated
+    catalogs) targeted at the session's weakest areas, persisted as
+    `RecommendationORM` rows and shown via `GET /sessions/{id}/recommendations`.
     """
 
     EMPTY = "empty"
@@ -109,6 +113,7 @@ class SessionState(str, enum.Enum):
     PROMPT_BUILDING = "prompt_building"
     REASONING = "reasoning"
     REPORT_GENERATED = "report_generated"
+    RECOMMENDING = "recommending"
     COMPLETED = "completed"
 
     FAILED = "failed"
@@ -196,6 +201,9 @@ class AnalysisSession(Base):
         back_populates="session", uselist=False, cascade="all, delete-orphan"
     )
     preliminary_evaluations: Mapped[list["PreliminaryEvaluationORM"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan"
+    )
+    recommendations: Mapped[list["RecommendationORM"]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
     )
 
@@ -599,3 +607,189 @@ class PreliminaryEvaluationORM(Base):
     generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     session: Mapped["AnalysisSession"] = relationship(back_populates="preliminary_evaluations")
+
+
+# ---------------------------------------------------------------------------
+# Recommendation Engine (MVP: LLM-driven, see docs/ERD_Design.md §4 for the
+# rule_engine -> tfrs upgrade path this schema was designed to absorb without
+# a rewrite; `generated_by` already accommodates "llm" as a third strategy).
+# ---------------------------------------------------------------------------
+
+
+class LearningResourceORM(Base):
+    """
+    The catalog of coachable content (`docs/ERD_Design.md` §2.13) that
+    `RecommendationORM` rows point into. Seeded from curated resource lists
+    (see `scripts/seed_learning_resources.py`) — a root entity, independent
+    of any session, so the catalog can be curated/extended without touching
+    evaluation history.
+    """
+
+    __tablename__ = "learning_resources"
+    __table_args__ = (UniqueConstraint("url", name="uq_learning_resources_url"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    url: Mapped[str] = mapped_column(String(1024), nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(32), default="video")  # video / article / course / exercise
+    platform: Mapped[str | None] = mapped_column(String(64), nullable=True)  # "Youtube" / "Website"
+    language: Mapped[str | None] = mapped_column(String(8), nullable=True)  # "vi" / "en"
+    speaker: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    source: Mapped[str | None] = mapped_column(String(128), nullable=True)  # catalog/category label, e.g. "TEDx..."
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Normalized skill slugs (e.g. "confidence", "speaking", "presentation",
+    # "critical_thinking", "interview", "general") that `RecommendationEngine`
+    # matches against a session's weak sub-scores. See
+    # `services/recommendation_engine.py::SKILL_TAG_TO_SCORE_FIELDS`.
+    skill_tags: Mapped[list] = mapped_column(JSON, default=list)
+    category_label: Mapped[str | None] = mapped_column(String(128), nullable=True)  # original catalog category text
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    recommendations: Mapped[list["RecommendationORM"]] = relationship(back_populates="resource")
+
+
+class RecommendationORM(Base):
+    """
+    One learning-resource suggestion generated for a session
+    (`docs/ERD_Design.md` §2.12), produced once the session's final report
+    exists (`RECOMMENDING` state, after `REPORT_GENERATED` and before
+    `COMPLETED` — see `services/session_state_machine.py`). MVP generates
+    these via the reasoning engine (`generated_by="llm"`), matching resources
+    against the session's weakest sub-scores/weaknesses; `generated_by` also
+    accommodates `"rule_engine"`/`"tfrs"` per the ERD's documented upgrade
+    path without any schema change.
+    """
+
+    __tablename__ = "recommendations"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("analysis_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    resource_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("learning_resources.id", ondelete="CASCADE"), nullable=False
+    )
+
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    target_skill_tags: Mapped[list] = mapped_column(JSON, default=list)  # which weak areas this addresses
+    generated_by: Mapped[str] = mapped_column(String(32), default="llm")
+
+    reasoning_engine_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reasoning_engine_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    session: Mapped["AnalysisSession"] = relationship(back_populates="recommendations")
+    resource: Mapped["LearningResourceORM"] = relationship(back_populates="recommendations")
+
+
+# ---------------------------------------------------------------------------
+# Live Practice (WebSocket audio streaming). Deliberately NOT built on
+# `AnalysisSession`/`SessionState` -- practice sessions are single-material
+# (audio only), ephemeral, and repeatable, so routing them through the full
+# Presentation/Interview state machine would add complexity with no benefit.
+# See `services/practice_session_manager.py` for the orchestration logic and
+# `routers/practice.py` for the WebSocket protocol.
+# ---------------------------------------------------------------------------
+
+
+class PracticeSessionState(str, enum.Enum):
+    """Lifecycle of a single live-practice WebSocket connection."""
+
+    CONNECTING = "connecting"
+    STREAMING = "streaming"
+    FINALIZING = "finalizing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class PracticeSessionORM(Base):
+    """
+    One live speaking-practice attempt: the client streams audio chunks over
+    a WebSocket while practicing, then signals end-of-session, at which
+    point the full recording is analyzed and a `PracticeEvaluationORM` is
+    produced (see `PracticeSessionManager.finalize`).
+    """
+
+    __tablename__ = "practice_sessions"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    language: Mapped[str] = mapped_column(String(8), nullable=False, default="vi")
+    state: Mapped[PracticeSessionState] = mapped_column(
+        Enum(PracticeSessionState, name="practice_session_state", values_callable=lambda obj: [e.value for e in obj]),
+        nullable=False,
+        default=PracticeSessionState.CONNECTING,
+    )
+    # NULL means a plain audio-only practice session (no slide/resume
+    # attached) -- the original Live Practice behavior. Set either at
+    # creation or inferred from whichever of attach_slide/attach_resume is
+    # called first (see PracticeSessionManager).
+    mode: Mapped[EvaluationMode | None] = mapped_column(
+        Enum(EvaluationMode, name="evaluation_mode", values_callable=lambda obj: [e.value for e in obj]),
+        nullable=True,
+    )
+
+    audio_file_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # Optional material attached before streaming starts, analyzed alongside
+    # the recorded audio at finalize time (see
+    # `PracticeSessionManager.finalize` -> `AIOrchestrator.build_unified_features`).
+    # At most one of the two is ever set, matching `mode`.
+    slide_file_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    resume_file_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    transcript_so_far: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    evaluation: Mapped["PracticeEvaluationORM | None"] = relationship(
+        back_populates="practice_session", uselist=False, cascade="all, delete-orphan"
+    )
+
+
+class PracticeEvaluationORM(Base):
+    """
+    The final, audio-only evaluation of one `PracticeSessionORM`. Mirrors
+    `PreliminaryEvaluationORM`'s shape (same sub-score columns + the same
+    `ReasoningPayload` fields) so the two can share persistence/response
+    conversion patterns, even though a practice session only ever populates
+    the speech/transcript-relevant subset.
+    """
+
+    __tablename__ = "practice_evaluations"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    practice_session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("practice_sessions.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+
+    resume_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    slide_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    speech_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    transcript_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    emotion_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    eye_contact_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    voice_confidence_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    presentation_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    communication_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    overall_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    scoring_engine_version: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    strengths: Mapped[list] = mapped_column(JSON, default=list)
+    weaknesses: Mapped[list] = mapped_column(JSON, default=list)
+    improvement_plan: Mapped[list] = mapped_column(JSON, default=list)
+    presentation_feedback: Mapped[str] = mapped_column(Text, default="")
+    interview_feedback: Mapped[str] = mapped_column(Text, default="")
+    interview_questions: Mapped[list] = mapped_column(JSON, default=list)
+    suggestions: Mapped[list] = mapped_column(JSON, default=list)
+
+    reasoning_engine_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    reasoning_engine_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    practice_session: Mapped["PracticeSessionORM"] = relationship(back_populates="evaluation")

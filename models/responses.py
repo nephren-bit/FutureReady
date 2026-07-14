@@ -13,6 +13,11 @@ Pydantic models describing API response payloads.
 Feature-extraction endpoints (`/extract/*`) and standalone analyzer
 endpoints (`/analyze/*`) return the relevant model from `models.features`
 directly and therefore do not need dedicated response wrappers.
+
+`RecommendationPayload` is the Recommendation Engine's LLM output shape
+(see `services/recommendation_engine.py`) — a ranked list of picks from a
+candidate resource list, never a freeform resource description, so the
+reasoning engine can only select from what it was actually given.
 """
 
 from __future__ import annotations
@@ -106,6 +111,26 @@ class EvaluationReport(BaseModel):
             derived_features=derived,
             features=features,
         )
+
+
+class RecommendationItem(BaseModel):
+    """One LLM-selected learning-resource pick, referencing a candidate resource by id."""
+
+    resource_id: str = Field(..., description="id of the chosen resource, copied verbatim from the candidate list.")
+    rationale: str = Field(..., description="1-2 sentence explanation grounded in the candidate's weak areas.")
+    target_skill_tags: list[str] = Field(default_factory=list)
+
+
+class RecommendationPayload(BaseModel):
+    """
+    The Recommendation Engine's LLM output (see `services/recommendation_engine.py`):
+    a ranked list of resource picks, each referencing a resource_id from the
+    candidate list the prompt supplied. The reasoning engine never invents a
+    resource — `RecommendationEngine.validate_picks` drops any pick whose
+    `resource_id` doesn't match a candidate it was actually given.
+    """
+
+    picks: list[RecommendationItem] = Field(default_factory=list)
 
 
 class ErrorResponse(BaseModel):

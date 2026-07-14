@@ -9,6 +9,7 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
+        ws: true, // needed for the Live Practice WebSocket (/api/practice/stream)
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
     },

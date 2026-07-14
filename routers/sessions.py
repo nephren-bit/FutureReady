@@ -3,8 +3,9 @@ routers/sessions.py
 
 The Session API -- the only router the session-centric platform exposes for
 running an evaluation. Routers never call `AIOrchestrator`,
-`FeatureFusionEngine`, `ScoringEngine`, `PromptBuilder`, or any reasoning
-engine directly; every request here goes through `EvaluationWorkflowManager`.
+`FeatureFusionEngine`, `ScoringEngine`, `PromptBuilder`, `RecommendationEngine`,
+or any reasoning engine directly; every request here goes through
+`EvaluationWorkflowManager`.
 
 Upload endpoints (`/slide`, `/resume`, `/video`) follow the same two-phase
 pattern:
@@ -20,7 +21,10 @@ pattern:
 Each material's analysis also chains into its own preliminary score +
 reasoning pass (see `services/workflow_manager.py`), visible immediately via
 `GET /sessions/{id}/preliminary/{stage}` -- the candidate does not have to
-wait for the video to see feedback on their slides/resume.
+wait for the video to see feedback on their slides/resume. Once the final
+report is generated, a Recommendation Engine pass automatically picks
+learning resources targeted at the session's weakest areas, visible via
+`GET /sessions/{id}/recommendations`.
 
 Background jobs open their own DB session (`db.session.SessionLocal`)
 rather than reusing the request-scoped one from `Depends(get_db)`, since
@@ -41,6 +45,7 @@ from db.session import SessionLocal, get_db
 from models.responses import ErrorResponse
 from models.session_models import (
     PreliminaryEvaluationResponse,
+    RecommendationListResponse,
     SessionCreateRequest,
     SessionReportResponse,
     SessionResponse,
@@ -140,6 +145,16 @@ async def create_session(
     return SessionResponse.from_orm_session(session)
 
 
+@router.get(
+    "",
+    response_model=list[SessionResponse],
+    summary="List all sessions, most recently created first.",
+)
+async def list_sessions(db: DBSession = Depends(get_db)) -> list[SessionResponse]:
+    sessions = workflow_manager.list_sessions(db)
+    return [SessionResponse.from_orm_session(session) for session in sessions]
+
+
 @router.post(
     "/{session_id}/slide",
     response_model=SessionResponse,
@@ -199,7 +214,8 @@ async def upload_resume(
     summary=(
         "Upload the presentation/interview video. Runs vision + speech analysis, "
         "then its own preliminary score + reasoning pass, then the full "
-        "Fusion -> Scoring -> Reasoning final-synthesis tail, in the background."
+        "Fusion -> Scoring -> Reasoning -> Recommending final-synthesis tail, "
+        "in the background."
     ),
 )
 async def upload_video(
@@ -337,6 +353,30 @@ async def get_preliminary_evaluation(
     except PreliminaryEvaluationNotReadyError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return PreliminaryEvaluationResponse.from_orm_row(row)
+
+
+@router.get(
+    "/{session_id}/recommendations",
+    response_model=RecommendationListResponse,
+    responses=_ERROR_RESPONSES,
+    summary=(
+        "Get the ranked learning-resource recommendations generated automatically "
+        "once the final report exists. Only available once state == COMPLETED "
+        "(recommendations run as the RECOMMENDING stage, right after REASONING)."
+    ),
+)
+async def get_recommendations(session_id: uuid.UUID, db: DBSession = Depends(get_db)) -> RecommendationListResponse:
+    try:
+        session = workflow_manager.get_session(db, session_id)
+    except SessionNotFoundError as exc:
+        raise _not_found(exc) from exc
+    if session.state.value != "completed":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Session {session_id} is not complete yet (state={session.state.value}).",
+        )
+    rows = workflow_manager.get_recommendations(db, session_id)
+    return RecommendationListResponse.from_orm_rows(session_id, rows)
 
 
 @router.delete(

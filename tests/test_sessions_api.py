@@ -31,7 +31,15 @@ from models.features import (
     TranscriptFeature,
     VideoFeature,
 )
-from models.responses import ReasoningPayload
+from models.responses import RecommendationPayload, ReasoningPayload
+
+
+async def _fake_generate_structured(prompt: str, response_model: type):
+    """Dispatches by `response_model` since a session's pipeline requests both
+    `ReasoningPayload` (preliminary + final) and `RecommendationPayload` schemas."""
+    if response_model is RecommendationPayload:
+        return RecommendationPayload()  # no learning_resources seeded in these tests -> never actually called
+    return ReasoningPayload(strengths=["Clear structure"], presentation_feedback="Solid overall delivery.")
 
 
 @pytest.fixture()
@@ -103,12 +111,8 @@ def client(monkeypatch, sample_slide_feature):
         ),
     )
     monkeypatch.setattr(
-        "services.gemini_service.gemini_service.generate_structured",
-        AsyncMock(
-            return_value=ReasoningPayload(
-                strengths=["Clear structure"], presentation_feedback="Solid overall delivery."
-            )
-        ),
+        "services.lmstudio_service.lmstudio_service.generate_structured",
+        AsyncMock(side_effect=_fake_generate_structured),
     )
 
     with TestClient(app_module.app) as test_client:
@@ -262,3 +266,48 @@ class TestPreliminaryEvaluationEndpoint:
         session_id = create_resp.json()["id"]
         resp = client.get(f"/sessions/{session_id}/preliminary/slide")
         assert resp.status_code == 409
+
+
+class TestRecommendationsEndpoint:
+    """
+    Covers `GET /sessions/{id}/recommendations` — automatically populated
+    once the final report exists (the `RECOMMENDING` stage runs right after
+    `REASONING`). These tests run against an unseeded `learning_resources`
+    catalog (see test_workflow_manager.py::TestRecommendationEngine for
+    coverage of actual resource matching/ranking), so the expected shape is
+    a 200 with an empty list -- confirming completion is never blocked by a
+    missing catalog, and that the endpoint itself is wired up correctly.
+    """
+
+    def test_recommendations_available_after_completion(self, client: TestClient) -> None:
+        create_resp = client.post("/sessions", json={"mode": "presentation", "language": "vi"})
+        session_id = create_resp.json()["id"]
+
+        client.post(
+            f"/sessions/{session_id}/slide",
+            files={"file": ("deck.pptx", b"fake-pptx-bytes", "application/octet-stream")},
+        )
+        _poll_until_state(client, session_id, {"waiting_for_video", "failed"})
+
+        client.post(
+            f"/sessions/{session_id}/video",
+            files={"file": ("clip.mp4", b"fake-mp4-bytes", "application/octet-stream")},
+        )
+        state = _poll_until_state(client, session_id, {"completed", "failed"})
+        assert state == "completed"
+
+        resp = client.get(f"/sessions/{session_id}/recommendations")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["session_id"] == session_id
+        assert body["recommendations"] == []  # no learning_resources seeded in this test DB
+
+    def test_recommendations_before_completion_is_409(self, client: TestClient) -> None:
+        create_resp = client.post("/sessions", json={"mode": "presentation", "language": "vi"})
+        session_id = create_resp.json()["id"]
+        resp = client.get(f"/sessions/{session_id}/recommendations")
+        assert resp.status_code == 409
+
+    def test_recommendations_unknown_session_is_404(self, client: TestClient) -> None:
+        resp = client.get("/sessions/00000000-0000-0000-0000-000000000000/recommendations")
+        assert resp.status_code == 404

@@ -5,7 +5,6 @@ import {
   ArrowLeft,
   FileText,
   VideoCamera,
-  UploadSimple,
   CheckCircle,
   XCircle,
   ArrowClockwise,
@@ -25,22 +24,6 @@ import type { Session, PreliminaryEvaluation, SessionState } from '../types'
 import { STATE_PROGRESS, STATE_LABELS } from '../types'
 import { cn } from '../lib/utils'
 
-const STATE_ORDER: SessionState[] = [
-  'CREATED', 'PENDING_UPLOAD',
-  'SLIDE_EXTRACTING', 'SLIDE_ANALYZING', 'SLIDE_SCORING', 'SLIDE_REASONING', 'SLIDE_EVALUATED',
-  'RESUME_EXTRACTING', 'RESUME_ANALYZING', 'RESUME_SCORING', 'RESUME_REASONING', 'RESUME_EVALUATED',
-  'VIDEO_EXTRACTING', 'VIDEO_ANALYZING', 'SPEECH_EXTRACTING', 'SPEECH_ANALYZING',
-  'EMOTION_ANALYZING', 'FACE_MESH_ANALYZING', 'TRANSCRIPT_ANALYZING',
-  'VIDEO_SCORING', 'VIDEO_REASONING', 'VIDEO_EVALUATED',
-  'FEATURE_FUSING', 'SCORING', 'PROMPT_BUILDING', 'REASONING',
-  'COMPLETED', 'FAILED',
-]
-
-function stateIndex(s: SessionState): number {
-  const idx = STATE_ORDER.indexOf(s)
-  return idx >= 0 ? idx : 0
-}
-
 function getProgress(state: SessionState): number {
   return (STATE_PROGRESS as Record<string, number>)[state] ?? 0
 }
@@ -49,13 +32,7 @@ function getLabel(state: SessionState): string {
   return (STATE_LABELS as Record<string, string>)[state] ?? state
 }
 
-function extractFileName(path: string): string {
-  const parts = path.replace(/\\/g, '/').split('/')
-  return parts[parts.length - 1] || path
-}
-
 interface DropzoneProps {
-  accept: string
   icon: React.ReactNode
   label: string
   hint: string
@@ -70,7 +47,6 @@ interface DropzoneProps {
 }
 
 function Dropzone({
-  accept,
   icon,
   label,
   hint,
@@ -159,7 +135,7 @@ export default function SessionDetail() {
   }, [fetchSession])
 
   useEffect(() => {
-    if (!session || session.state === 'COMPLETED' || session.state === 'FAILED') {
+    if (!session || session.state === 'completed' || session.state === 'failed') {
       if (pollingRef.current) {
         clearInterval(pollingRef.current)
         pollingRef.current = null
@@ -189,20 +165,30 @@ export default function SessionDetail() {
 
   useEffect(() => {
     if (!session) return
+    // A material's `PreliminaryEvaluationORM` row is only committed once its
+    // own scoring + reasoning pass finishes -- which, for slide/resume,
+    // happens right before the session cascades into `waiting_for_video`,
+    // and for video right before it cascades into the final synthesis tail
+    // ending at `completed` (see `_run_preliminary_evaluation` /
+    // `_run_final_synthesis` in services/workflow_manager.py). `has_slide`
+    // etc. flip true immediately on upload, long before that -- fetching
+    // as soon as they're true hits `GET .../preliminary/{stage}` while the
+    // row doesn't exist yet, which the API correctly answers with 409 but
+    // floods the console every 3s poll until analysis finishes.
+    const firstStage = session.mode === 'presentation' ? 'slide' : 'resume'
+    const firstUploaded = firstStage === 'slide' ? session.has_slide : session.has_resume
+    const pastFirstMaterial = session.legal_next_events.includes('upload_video') || session.has_video
+
     const stages: string[] = []
-    if (session.slide_path && !fetchedStagesRef.current.has('slide')) {
-      fetchedStagesRef.current.add('slide')
-      stages.push('slide')
+    if (firstUploaded && pastFirstMaterial && !fetchedStagesRef.current.has(firstStage)) {
+      fetchedStagesRef.current.add(firstStage)
+      stages.push(firstStage)
     }
-    if (session.resume_path && !fetchedStagesRef.current.has('resume')) {
-      fetchedStagesRef.current.add('resume')
-      stages.push('resume')
-    }
-    if (session.video_path && !fetchedStagesRef.current.has('video')) {
+    if (session.has_video && session.state === 'completed' && !fetchedStagesRef.current.has('video')) {
       fetchedStagesRef.current.add('video')
       stages.push('video')
     }
-    if (session.state === 'COMPLETED' && !fetchedStagesRef.current.has('final')) {
+    if (session.state === 'completed' && !fetchedStagesRef.current.has('final')) {
       fetchedStagesRef.current.add('final')
       stages.push('final')
     }
@@ -306,33 +292,34 @@ export default function SessionDetail() {
   }
 
   const isPresentation = session.mode === 'presentation'
-  const isCompleted = session.state === 'COMPLETED'
-  const isFailed = session.state === 'FAILED'
+  const isCompleted = session.state === 'completed'
+  const isFailed = session.state === 'failed'
   const isTerminal = isCompleted || isFailed
-  const isProcessingState = !isTerminal && session.state !== 'CREATED' && session.state !== 'PENDING_UPLOAD'
   const progress = getProgress(session.state)
 
-  const slideUploaded = !!session.slide_path
-  const resumeUploaded = !!session.resume_path
-  const videoUploaded = !!session.video_path
-  const firstUploaded = isPresentation ? slideUploaded : resumeUploaded
+  // `legal_next_events` tells us exactly what the state machine allows right
+  // now (see services/session_state_machine.py) -- e.g. `upload_slide` is
+  // only legal while the session is still in its initial `empty` state, and
+  // `upload_video` only once the first material has been fully evaluated.
+  const legalEvents = session.legal_next_events
+  const canUploadFirst = legalEvents.includes(isPresentation ? 'upload_slide' : 'upload_resume')
+  const canUploadVideo = legalEvents.includes('upload_video')
+
+  const firstUploaded = isPresentation ? session.has_slide : session.has_resume
+  const videoUploaded = session.has_video
   const firstUploading = uploading === (isPresentation ? 'slide' : 'resume')
   const videoUploading = uploading === 'video'
 
-  const pastFirstStage = isPresentation
-    ? stateIndex(session.state) >= stateIndex('SLIDE_EVALUATED')
-    : stateIndex(session.state) >= stateIndex('RESUME_EVALUATED')
+  const isProcessingState = !isTerminal && !canUploadFirst && !canUploadVideo
 
   const showFirstUpload = !isTerminal
-  const showVideoUpload = (pastFirstStage || videoUploaded) && !isTerminal
+  const showVideoUpload = (canUploadVideo || videoUploaded) && !isTerminal
 
-  const firstFileName = isPresentation
-    ? (slideUploaded ? extractFileName(session.slide_path!) : undefined)
-    : (resumeUploaded ? extractFileName(session.resume_path!) : undefined)
-  const videoFileName = videoUploaded ? extractFileName(session.video_path!) : undefined
+  const firstFileName = firstUploaded ? (isPresentation ? 'Slide đã tải lên' : 'CV đã tải lên') : undefined
+  const videoFileName = videoUploaded ? 'Video đã tải lên' : undefined
 
-  const firstAreaDisabled = firstUploaded || isProcessingState || uploading !== null
-  const videoAreaDisabled = !firstUploaded || videoUploaded || isProcessingState || uploading !== null
+  const firstAreaDisabled = !canUploadFirst || uploading !== null
+  const videoAreaDisabled = !canUploadVideo || uploading !== null
 
   const showProcessing = isProcessingState && !showVideoUpload
 
@@ -438,7 +425,6 @@ export default function SessionDetail() {
               {isPresentation ? 'Tải lên Slide Thuyết trình' : 'Tải lên CV'}
             </h3>
             <Dropzone
-              accept={isPresentation ? '.pptx' : '.pdf'}
               icon={<FileText className="h-6 w-6 text-accent" />}
               label={isPresentation ? 'Kéo thả slide vào đây (.pptx)' : 'Kéo thả CV vào đây (.pdf)'}
               hint="Kéo thả hoặc nhấn để chọn"
@@ -478,7 +464,6 @@ export default function SessionDetail() {
           <div className="rounded-xl border border-border bg-surface p-5">
             <h3 className="text-sm font-semibold text-text-primary mb-4">Tải lên Video Ghi hình</h3>
             <Dropzone
-              accept=".mp4,.mov"
               icon={<VideoCamera className="h-6 w-6 text-accent" />}
               label="Kéo thả video vào đây (.mp4, .mov)"
               hint="Kéo thả hoặc nhấn để chọn"
@@ -536,23 +521,29 @@ export default function SessionDetail() {
           <div className="grid gap-4 sm:grid-cols-2">
             {prelimStages.map(stage => {
               const ev = preliminary[stage]
+              const score = ev.scores.overall_score
+              const summary =
+                ev.reasoning.presentation_feedback ||
+                ev.reasoning.interview_feedback ||
+                ev.reasoning.strengths[0] ||
+                ''
               const scoreColor =
-                ev.score >= 70 ? 'text-success' : ev.score >= 40 ? 'text-warning' : 'text-error'
+                score >= 70 ? 'text-success' : score >= 40 ? 'text-warning' : 'text-error'
               const barColor =
-                ev.score >= 70 ? 'bg-success' : ev.score >= 40 ? 'bg-warning' : 'bg-error'
+                score >= 70 ? 'bg-success' : score >= 40 ? 'bg-warning' : 'bg-error'
               return (
                 <div key={stage} className="rounded-xl border border-border bg-surface p-5">
                   <div className="flex items-center justify-between mb-3">
                     <span className="text-xs font-medium text-text-secondary capitalize">{stage}</span>
-                    <span className={cn('text-lg font-bold', scoreColor)}>{ev.score}</span>
+                    <span className={cn('text-lg font-bold', scoreColor)}>{score}</span>
                   </div>
                   <div className="h-1.5 w-full rounded-full bg-surface-elevated mb-3 overflow-hidden">
                     <div
                       className={cn('h-full rounded-full transition-all duration-500', barColor)}
-                      style={{ width: `${Math.min(100, Math.max(0, ev.score))}%` }}
+                      style={{ width: `${Math.min(100, Math.max(0, score))}%` }}
                     />
                   </div>
-                  <p className="text-xs text-text-muted leading-relaxed">{ev.reasoning}</p>
+                  <p className="text-xs text-text-muted leading-relaxed">{summary}</p>
                 </div>
               )
             })}

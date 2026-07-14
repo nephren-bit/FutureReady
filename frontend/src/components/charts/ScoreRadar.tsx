@@ -2,14 +2,14 @@ import { RadarChart, PolarGrid, PolarAngleAxis, Radar, ResponsiveContainer } fro
 
 const LABEL_MAP: Record<string, string> = {
   resume_score: 'CV',
-  slide_content_score: 'Nội dung Slide',
-  slide_visual_score: 'Hình ảnh Slide',
-  speech_delivery_score: 'Giọng nói',
-  transcript_quality_score: 'Chất lượng nội dung',
-  body_language_score: 'Ngôn ngữ cơ thể',
-  emotional_confidence_score: 'Tự tin cảm xúc',
-  presentation_readiness: 'Sẵn sàng thuyết trình',
-  interview_readiness: 'Sẵn sàng phỏng vấn',
+  slide_score: 'Slide',
+  speech_score: 'Giọng nói',
+  transcript_score: 'Chất lượng nội dung',
+  emotion_score: 'Cảm xúc',
+  eye_contact_score: 'Giao tiếp bằng mắt',
+  voice_confidence_score: 'Tự tin giọng nói',
+  presentation_score: 'Thuyết trình',
+  communication_score: 'Giao tiếp',
 }
 
 function CustomTick({ x, y, payload }: { x: number; y: number; payload?: { value: string } }) {
