@@ -1,0 +1,15 @@
+# config/providers.yaml
+#
+# Selects which concrete implementation backs each swappable provider
+# contract. Today only `reasoning_engine` exists (BaseReasoningEngine);
+# future provider families (e.g. a Persona/Recommendation engine) would
+# add their own key here, read by their own registry method, without
+# touching EvaluationWorkflowManager, FeatureFusionEngine, ScoringEngine,
+# or any API contract.
+#
+# Supported values for reasoning_engine today: gemini
+# (Claude / GPT / a local model / a fine-tuned model can be added later by
+# registering a new BaseReasoningEngine implementation in
+# providers/registry.py and pointing this key at its name.)
+
+reasoning_engine: gemini

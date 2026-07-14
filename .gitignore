@@ -1,0 +1,31 @@
+# Environments
+venv/
+.venv/
+env/
+ENV/
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+build/
+dist/
+.pytest_cache/
+
+# Project runtime artifacts (never commit uploaded/generated user data)
+uploads/
+uploads_test/
+*.tmp
+err.log
+
+# Whisper / HSEmotion / MediaPipe model caches (large, re-downloaded on first use)
+.cache/
+*.onnx
+*.pt
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
