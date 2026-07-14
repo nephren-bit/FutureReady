@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #fafafa;
+  --color-bg-dark: #0a0a0a;
+  --color-surface: #ffffff;
+  --color-surface-dark: #141414;
+  --color-surface-elevated: #f5f5f5;
+  --color-surface-elevated-dark: #1a1a1a;
+  --color-border: #e5e5e5;
+  --color-border-dark: #262626;
+  --color-text-primary: #0a0a0a;
+  --color-text-primary-dark: #fafafa;
+  --color-text-secondary: #525252;
+  --color-text-secondary-dark: #a3a3a3;
+  --color-text-muted: #737373;
+  --color-text-muted-dark: #737373;
+  --color-accent: #2563eb;
+  --color-accent-hover: #1d4ed8;
+  --color-accent-light: #dbeafe;
+  --color-accent-light-dark: #1e3a5f;
+  --color-success: #059669;
+  --color-success-light: #d1fae5;
+  --color-warning: #d97706;
+  --color-warning-light: #fef3c7;
+  --color-error: #dc2626;
+  --color-error-light: #fee2e2;
+  --font-sans: "Be Vietnam Pro", "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  .dark * {
+    border-color: var(--color-border-dark);
+  }
+  body {
+    background: var(--color-bg);
+    color: var(--color-text-primary);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    margin: 0;
+  }
+  .dark body {
+    background: var(--color-bg-dark);
+    color: var(--color-text-primary-dark);
+  }
+}
+
+@layer utilities {
+  .glass {
+    background: rgba(255, 255, 255, 0.72);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+  }
+  .dark .glass {
+    background: rgba(20, 20, 20, 0.72);
+  }
+}
+
+/* Be Vietnam Pro - native Vietnamese font, supports all diacritics */
+@import url("https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap");
+
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
