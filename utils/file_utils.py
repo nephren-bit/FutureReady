@@ -13,6 +13,8 @@ every router (cv, slide, audio, evaluate).
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 import uuid
 from pathlib import Path
 
@@ -23,6 +25,18 @@ from config import settings
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+# Common install locations for LibreOffice's headless CLI on each platform --
+# checked in order after a plain `PATH` lookup. Windows installers don't add
+# `soffice.exe` to `PATH` by default, so the explicit paths matter there.
+_SOFFICE_CANDIDATES = [
+    "soffice",
+    r"C:\Program Files\LibreOffice\program\soffice.exe",
+    r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+    "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+    "/usr/bin/soffice",
+    "/usr/local/bin/soffice",
+]
 
 
 def validate_extension(file: UploadFile, allowed_extensions: set[str]) -> str:
@@ -107,6 +121,61 @@ async def save_upload_file(
 
     logger.info("Saved upload '%s' (%d bytes) to %s", file.filename, total_size, destination)
     return destination
+
+
+def _find_soffice() -> str:
+    for candidate in _SOFFICE_CANDIDATES:
+        if shutil.which(candidate) or Path(candidate).exists():
+            return candidate
+    raise RuntimeError(
+        "LibreOffice ('soffice') was not found on this machine. Install it "
+        "(Windows: winget install --id TheDocumentFoundation.LibreOffice -e; "
+        "macOS: brew install --cask libreoffice; Debian/Ubuntu: "
+        "sudo apt install libreoffice) to enable slide previews."
+    )
+
+
+def convert_pptx_to_pdf(pptx_path: Path) -> Path:
+    """
+    Converts a .pptx file to .pdf via headless LibreOffice, so it can be
+    shown in a browser's native PDF viewer -- browsers can't render .pptx
+    directly the way they can .pdf. Used only for the Live Practice slide
+    preview (see `routers/practice.py`); unrelated to the deterministic
+    pptx *content* extraction in `extractors/ppt_extractor.py`.
+
+    The result is cached next to the source file and reused as long as it's
+    newer than the source, so repeated preview requests only convert once.
+
+    Raises:
+        RuntimeError: if LibreOffice isn't installed or the conversion fails.
+    """
+    pdf_path = pptx_path.with_suffix(".pdf")
+    if pdf_path.exists() and pdf_path.stat().st_mtime >= pptx_path.stat().st_mtime:
+        return pdf_path
+
+    soffice = _find_soffice()
+    result = subprocess.run(
+        [
+            soffice,
+            "--headless",
+            "--norestore",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            str(pptx_path.parent),
+            str(pptx_path),
+        ],
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+    if result.returncode != 0 or not pdf_path.exists():
+        raise RuntimeError(
+            f"LibreOffice failed to convert '{pptx_path.name}' to PDF: "
+            f"{result.stderr.decode(errors='replace').strip() or result.stdout.decode(errors='replace').strip()}"
+        )
+    logger.info("Converted %s to %s for slide preview", pptx_path, pdf_path)
+    return pdf_path
 
 
 def cleanup_file(path: Path) -> None:

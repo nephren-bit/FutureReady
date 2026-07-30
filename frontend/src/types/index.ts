@@ -130,6 +130,24 @@ export interface PracticeEvaluation {
   generated_at: string
 }
 
+export interface RecommendationItem {
+  resource_title: string
+  resource_url: string
+  resource_type: string
+  platform?: string | null
+  language?: string | null
+  speaker?: string | null
+  rank: number
+  rationale: string
+  target_skill_tags: string[]
+}
+
+export interface RecommendationList {
+  session_id: string
+  recommendations: RecommendationItem[]
+  generated_by?: string | null
+}
+
 export interface SessionCreateRequest {
   mode: EvaluationMode
   language?: string

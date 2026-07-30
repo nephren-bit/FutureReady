@@ -11,11 +11,14 @@ import {
   ArrowClockwise,
   FileText,
   VideoCamera,
+  VideoCameraSlash,
+  DownloadSimple,
   X,
 } from '@phosphor-icons/react'
 import ScoreBar from '../components/charts/ScoreBar'
 import {
   practiceStreamUrl,
+  practiceSlidePreviewUrl,
   getPracticeEvaluation,
   createPracticeSession,
   uploadPracticeSlide,
@@ -134,11 +137,15 @@ export default function Practice() {
   const [elapsed, setElapsed] = useState(0)
   const [stageIndex, setStageIndex] = useState(0)
   const [file, setFile] = useState<File | null>(null)
+  const [fileUrl, setFileUrl] = useState<string | null>(null)
+  const [cameraEnabled, setCameraEnabled] = useState(true)
+  const [cameraActive, setCameraActive] = useState(false)
   const [connectingLabel, setConnectingLabel] = useState('Đang kết nối và yêu cầu quyền microphone...')
 
   const wsRef = useRef<WebSocket | null>(null)
   const recorderRef = useRef<MediaRecorder | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const stageTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const sessionIdRef = useRef<string | null>(null)
@@ -146,6 +153,30 @@ export default function Practice() {
 
   const supported = typeof MediaRecorder !== 'undefined' && !!navigator.mediaDevices?.getUserMedia
   const stages = pipelineStages(mode)
+
+  // Object URL for previewing the attached slide/CV during recording (see
+  // the reference panel in the 'recording' phase below). Only the CV (.pdf)
+  // can actually be rendered inline by the browser -- slides (.pptx) get a
+  // download link instead since browsers can't render that format natively.
+  useEffect(() => {
+    if (!file) {
+      setFileUrl(null)
+      return
+    }
+    const url = URL.createObjectURL(file)
+    setFileUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [file])
+
+  // Attaches the live camera stream to the preview <video> once the
+  // 'recording' phase actually mounts it -- doing this here (rather than
+  // right after getUserMedia in handleStart) avoids a race against React's
+  // render of that element.
+  useEffect(() => {
+    if (phase === 'recording' && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current
+    }
+  }, [phase])
 
   const cleanupMedia = useCallback(() => {
     if (timerRef.current) {
@@ -198,6 +229,7 @@ export default function Practice() {
     setSessionId(null)
     sessionIdRef.current = null
     setElapsed(0)
+    setCameraActive(false)
 
     const picked = pickRecorderFormat()
     if (!picked) {
@@ -207,7 +239,11 @@ export default function Practice() {
     }
 
     setPhase('connecting')
-    setConnectingLabel('Đang kết nối và yêu cầu quyền microphone...')
+    setConnectingLabel(
+      cameraEnabled
+        ? 'Đang kết nối và yêu cầu quyền microphone & camera...'
+        : 'Đang kết nối và yêu cầu quyền microphone...'
+    )
 
     // If a slide/CV was attached, it has to reach the server before the mic
     // opens: create the practice session up front via REST and upload it
@@ -219,6 +255,11 @@ export default function Practice() {
       try {
         const created = await createPracticeSession(mode, language)
         practiceSessionId = created.id
+        // Known immediately (it's the id we just created) -- set it now
+        // rather than waiting for the WS's 'session_started' echo, so the
+        // slide-preview panel below can start loading right away.
+        sessionIdRef.current = created.id
+        setSessionId(created.id)
         if (mode === 'presentation') {
           await uploadPracticeSlide(created.id, file)
         } else {
@@ -229,25 +270,49 @@ export default function Practice() {
         setPhase('failed')
         return
       }
-      setConnectingLabel('Đang kết nối và yêu cầu quyền microphone...')
+      setConnectingLabel(
+        cameraEnabled
+          ? 'Đang kết nối và yêu cầu quyền microphone & camera...'
+          : 'Đang kết nối và yêu cầu quyền microphone...'
+      )
     }
 
     let stream: MediaStream
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: cameraEnabled ? { facingMode: 'user', width: 640, height: 480 } : false,
+      })
     } catch {
-      setError('Không thể truy cập microphone. Vui lòng cấp quyền và thử lại.')
-      setPhase('failed')
-      return
+      if (cameraEnabled) {
+        // Camera may have been denied/unavailable while the mic is fine --
+        // fall back to audio-only rather than failing the whole session.
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        } catch {
+          setError('Không thể truy cập microphone. Vui lòng cấp quyền và thử lại.')
+          setPhase('failed')
+          return
+        }
+      } else {
+        setError('Không thể truy cập microphone. Vui lòng cấp quyền và thử lại.')
+        setPhase('failed')
+        return
+      }
     }
     streamRef.current = stream
+    setCameraActive(stream.getVideoTracks().length > 0)
 
     const ws = new WebSocket(practiceStreamUrl(language, picked.format, practiceSessionId))
     ws.binaryType = 'arraybuffer'
     wsRef.current = ws
 
     ws.onopen = () => {
-      const recorder = new MediaRecorder(stream, { mimeType: picked.mime })
+      // The camera track (if any) is only ever used for the local self-view
+      // preview -- `WS /practice/stream` is audio-only (see routers/practice.py),
+      // so the recorder must only ever see the audio track.
+      const audioOnlyStream = new MediaStream(stream.getAudioTracks())
+      const recorder = new MediaRecorder(audioOnlyStream, { mimeType: picked.mime })
       recorderRef.current = recorder
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
@@ -308,7 +373,7 @@ export default function Practice() {
         return 'failed'
       })
     }
-  }, [mode, language, file, cleanupMedia])
+  }, [mode, language, file, cameraEnabled, cleanupMedia])
 
   const recoverEvaluation = useCallback(async (id: string) => {
     for (let attempt = 0; attempt < 8; attempt++) {
@@ -339,6 +404,7 @@ export default function Practice() {
       clearInterval(timerRef.current)
       timerRef.current = null
     }
+    setCameraActive(false)
     setPhase('finalizing')
   }, [])
 
@@ -351,6 +417,7 @@ export default function Practice() {
     setTips([])
     setEvaluation(null)
     setSessionId(null)
+    setCameraActive(false)
   }, [cleanupMedia])
 
   const overall = evaluation?.scores.overall_score ?? 0
@@ -480,6 +547,28 @@ export default function Practice() {
             )}
 
             <div className="mb-6">
+              <label className="flex items-center gap-3 rounded-lg border border-border bg-surface-elevated px-4 py-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={cameraEnabled}
+                  onChange={(e) => setCameraEnabled(e.target.checked)}
+                  className="h-4 w-4 rounded border-border text-accent focus:ring-accent/30"
+                />
+                {cameraEnabled ? (
+                  <VideoCamera size={18} className="text-accent shrink-0" weight="bold" />
+                ) : (
+                  <VideoCameraSlash size={18} className="text-text-muted shrink-0" weight="bold" />
+                )}
+                <span className="text-sm text-text-primary">
+                  Bật camera
+                  <span className="block text-xs text-text-muted">
+                    Chỉ hiển thị hình ảnh của bạn để tự quan sát -- không được gửi lên máy chủ hay phân tích.
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            <div className="mb-6">
               <label htmlFor="practice-language" className="block text-sm font-medium text-text-primary mb-2">
                 Ngôn ngữ
               </label>
@@ -539,25 +628,99 @@ export default function Practice() {
               <span className="font-mono text-sm text-text-muted">{formatElapsed(elapsed)}</span>
             </div>
 
-            <div className="mb-6 min-h-[4.5rem] rounded-lg bg-surface-elevated p-4">
-              <p className="text-sm text-text-secondary leading-relaxed">
-                {transcript || 'Bắt đầu nói -- văn bản sẽ xuất hiện ở đây...'}
-              </p>
-            </div>
+            <div className={cn('mb-6 grid gap-4', (cameraEnabled || file) && 'sm:grid-cols-2')}>
+              <div>
+                <div className="mb-4 min-h-[4.5rem] rounded-lg bg-surface-elevated p-4">
+                  <p className="text-sm text-text-secondary leading-relaxed">
+                    {transcript || 'Bắt đầu nói -- văn bản sẽ xuất hiện ở đây...'}
+                  </p>
+                </div>
 
-            {tips.length > 0 && (
-              <div className="mb-6 space-y-2">
-                {tips.map((tip, i) => (
-                  <div
-                    key={i}
-                    className="flex items-start gap-2 rounded-lg bg-warning-light px-3 py-2 text-xs text-text-secondary"
-                  >
-                    <Lightbulb className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" weight="fill" />
-                    {tip}
+                {tips.length > 0 && (
+                  <div className="space-y-2">
+                    {tips.map((tip, i) => (
+                      <div
+                        key={i}
+                        className="flex items-start gap-2 rounded-lg bg-warning-light px-3 py-2 text-xs text-text-secondary"
+                      >
+                        <Lightbulb className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" weight="fill" />
+                        {tip}
+                      </div>
+                    ))}
                   </div>
-                ))}
+                )}
               </div>
-            )}
+
+              {(cameraEnabled || file) && (
+                <div className="space-y-4">
+                  {cameraEnabled && (
+                    <div className="overflow-hidden rounded-lg border border-border bg-black aspect-video">
+                      {cameraActive ? (
+                        <video
+                          ref={videoRef}
+                          autoPlay
+                          muted
+                          playsInline
+                          className="h-full w-full -scale-x-100 object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-full items-center justify-center gap-2 text-xs text-white/60">
+                          <VideoCameraSlash size={16} />
+                          Không thể mở camera
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {file && (
+                    <div className="rounded-lg border border-border bg-surface-elevated p-4">
+                      {mode === 'interview' && fileUrl ? (
+                        <>
+                          <p className="mb-2 flex items-center gap-2 text-xs font-medium text-text-secondary">
+                            <FileText size={14} className="text-accent shrink-0" />
+                            <span className="truncate">{file.name}</span>
+                          </p>
+                          <iframe
+                            src={fileUrl}
+                            title={file.name}
+                            className="h-48 w-full rounded border border-border bg-white"
+                          />
+                        </>
+                      ) : sessionId ? (
+                        <>
+                          <p className="mb-2 flex items-center gap-2 text-xs font-medium text-text-secondary">
+                            <FileText size={14} className="text-accent shrink-0" />
+                            <span className="truncate">{file.name}</span>
+                          </p>
+                          {/* Browsers can't render .pptx directly -- the backend
+                              converts it to PDF via LibreOffice on first request
+                              (routers/practice.py) and this just embeds that. */}
+                          <iframe
+                            src={practiceSlidePreviewUrl(sessionId)}
+                            title={file.name}
+                            className="h-48 w-full rounded border border-border bg-white"
+                          />
+                          <a
+                            href={practiceSlidePreviewUrl(sessionId)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:underline"
+                          >
+                            <DownloadSimple size={14} />
+                            Mở trong tab mới
+                          </a>
+                        </>
+                      ) : (
+                        <p className="flex items-center gap-2 text-sm text-text-muted">
+                          <FileText size={16} className="shrink-0" />
+                          <span className="truncate">{file.name}</span>
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
             <motion.button
               type="button"

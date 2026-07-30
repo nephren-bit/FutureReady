@@ -188,10 +188,6 @@ export default function SessionDetail() {
       fetchedStagesRef.current.add('video')
       stages.push('video')
     }
-    if (session.state === 'completed' && !fetchedStagesRef.current.has('final')) {
-      fetchedStagesRef.current.add('final')
-      stages.push('final')
-    }
     stages.forEach(fetchPreliminary)
   }, [session, fetchPreliminary])
 

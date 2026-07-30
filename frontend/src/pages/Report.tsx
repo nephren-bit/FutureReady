@@ -1,10 +1,20 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { motion } from 'motion/react'
-import { ArrowLeft, CheckCircle, XCircle, Lightbulb, Warning, TrendUp, Question } from '@phosphor-icons/react'
-import { getReport } from '../lib/api'
+import {
+  ArrowLeft,
+  CheckCircle,
+  XCircle,
+  Lightbulb,
+  Warning,
+  TrendUp,
+  Question,
+  GraduationCap,
+  ArrowSquareOut,
+} from '@phosphor-icons/react'
+import { getReport, getRecommendations } from '../lib/api'
 import { cn } from '../lib/utils'
-import type { EvaluationReport, ScoreBreakdown, DerivedFeatures } from '../types'
+import type { EvaluationReport, ScoreBreakdown, DerivedFeatures, RecommendationItem } from '../types'
 import ScoreRadar from '../components/charts/ScoreRadar'
 import ScoreBar from '../components/charts/ScoreBar'
 
@@ -129,6 +139,7 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
 export default function Report() {
   const { id } = useParams<{ id: string }>()
   const [report, setReport] = useState<EvaluationReport | null>(null)
+  const [recommendations, setRecommendations] = useState<RecommendationItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -142,6 +153,17 @@ export default function Report() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'An unexpected error occurred'
       setError(msg)
+      setLoading(false)
+      return
+    }
+    // Recommendations are generated right after the report (RECOMMENDING
+    // state); an empty list just means the catalog wasn't seeded or nothing
+    // matched, not an error, so failures here shouldn't block the report.
+    try {
+      const recData = await getRecommendations(id)
+      setRecommendations(recData.recommendations)
+    } catch {
+      setRecommendations([])
     } finally {
       setLoading(false)
     }
@@ -378,6 +400,55 @@ export default function Report() {
                 </li>
               ))}
             </ol>
+          </div>
+        </motion.section>
+      )}
+
+      {recommendations.length > 0 && (
+        <motion.section {...sectionAnim} className="mb-12">
+          <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold text-text-primary">
+            <GraduationCap className="h-5 w-5 text-accent" weight="fill" />
+            Lộ trình Học tập Gợi ý
+          </h2>
+          <div className="grid gap-4 md:grid-cols-2">
+            {recommendations
+              .slice()
+              .sort((a, b) => a.rank - b.rank)
+              .map((item) => (
+                <a
+                  key={`${item.rank}-${item.resource_url}`}
+                  href={item.resource_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group rounded-xl border border-border bg-surface p-5 transition-colors hover:border-accent"
+                >
+                  <div className="mb-2 flex items-start justify-between gap-2">
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent-light text-xs font-bold text-accent">
+                      {item.rank}
+                    </span>
+                    <ArrowSquareOut className="h-4 w-4 shrink-0 text-text-muted transition-colors group-hover:text-accent" />
+                  </div>
+                  <h3 className="mb-1 text-sm font-semibold text-text-primary">
+                    {item.resource_title}
+                  </h3>
+                  <p className="mb-2 text-xs text-text-muted">
+                    {[item.resource_type, item.platform, item.speaker].filter(Boolean).join(' · ')}
+                  </p>
+                  <p className="text-sm leading-relaxed text-text-secondary">{item.rationale}</p>
+                  {item.target_skill_tags.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {item.target_skill_tags.map((tag) => (
+                        <span
+                          key={tag}
+                          className="rounded-full bg-surface-elevated px-2 py-0.5 text-xs text-text-secondary"
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </a>
+              ))}
           </div>
         </motion.section>
       )}

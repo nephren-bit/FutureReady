@@ -52,6 +52,7 @@ from pathlib import Path
 
 import aiofiles
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session as DBSession
 
 from config import settings
@@ -69,7 +70,7 @@ from services.practice_session_manager import (
     PracticeSessionNotFoundError,
     practice_session_manager,
 )
-from utils.file_utils import save_upload_file, validate_extension
+from utils.file_utils import convert_pptx_to_pdf, save_upload_file, validate_extension
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -272,6 +273,32 @@ async def upload_practice_slide(
     except PracticeMaterialError as exc:
         raise _material_conflict(exc) from exc
     return PracticeSessionResponse.from_orm_session(session)
+
+
+@router.get(
+    "/{practice_session_id}/slide/preview",
+    summary=(
+        "Get the attached slide deck rendered as a PDF, so it can be shown live during practice "
+        "(browsers can't render .pptx directly -- this converts it once via headless LibreOffice "
+        "and caches the result)."
+    ),
+)
+async def get_practice_slide_preview(
+    practice_session_id: uuid.UUID, db: DBSession = Depends(get_db)
+) -> FileResponse:
+    try:
+        session = practice_session_manager.get_session(db, practice_session_id)
+    except PracticeSessionNotFoundError as exc:
+        raise _not_found(exc) from exc
+    if not session.slide_file_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="No slide attached to this practice session."
+        )
+    try:
+        pdf_path = await asyncio.to_thread(convert_pptx_to_pdf, Path(session.slide_file_path))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    return FileResponse(pdf_path, media_type="application/pdf")
 
 
 @router.post(

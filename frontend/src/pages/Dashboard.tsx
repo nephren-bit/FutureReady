@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'motion/react'
-import { Plus, FileText, VideoCamera, Microphone, Trash, ArrowClockwise } from '@phosphor-icons/react'
+import { Plus, FileText, VideoCamera, Trash, ArrowClockwise } from '@phosphor-icons/react'
 import { listSessions, deleteSession, retrySession } from '../lib/api'
 import { cn } from '../lib/utils'
 import type { Session, SessionState } from '../types'
@@ -57,7 +57,15 @@ export default function Dashboard() {
     setError(null)
     try {
       const data = await listSessions()
-      setSessions(data)
+      // A session is only "used" once at least one material has been
+      // uploaded to it -- `state === 'empty'` means it was created (via
+      // "Phiên mới") and then abandoned before any upload, so it isn't
+      // worth keeping around cluttering the dashboard.
+      const unused = data.filter((s) => s.state === 'empty')
+      if (unused.length > 0) {
+        await Promise.allSettled(unused.map((s) => deleteSession(s.id)))
+      }
+      setSessions(data.filter((s) => s.state !== 'empty'))
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Không thể tải danh sách phiên'
       setError(message)
@@ -114,32 +122,6 @@ export default function Dashboard() {
           <h1 className="text-2xl sm:text-3xl font-semibold text-text-primary">
             Bảng điều khiển
           </h1>
-          <div className="flex items-center gap-3">
-            <Link
-              to="/app/practice"
-              className={cn(
-                'inline-flex items-center gap-2 px-4 py-2.5 rounded-lg',
-                'bg-surface-elevated text-text-secondary font-medium text-sm border border-border',
-                'hover:text-text-primary hover:border-accent/40 transition-colors duration-200',
-                'focus:outline-none focus:ring-2 focus:ring-accent/40 focus:ring-offset-2'
-              )}
-            >
-              <Microphone size={18} weight="bold" />
-              Luyện tập nhanh
-            </Link>
-            <Link
-              to="/app/new"
-              className={cn(
-                'inline-flex items-center gap-2 px-4 py-2.5 rounded-lg',
-                'bg-accent text-white font-medium text-sm',
-                'hover:bg-accent-hover transition-colors duration-200',
-                'focus:outline-none focus:ring-2 focus:ring-accent/40 focus:ring-offset-2'
-              )}
-            >
-              <Plus size={18} weight="bold" />
-              Phiên mới
-            </Link>
-          </div>
         </div>
 
         {loading && (

@@ -510,6 +510,25 @@ sudo apt install ffmpeg
 shell was already open when you installed it, open a new one (or restart
 `uvicorn`) so it picks up the change.
 
+**`LibreOffice` is optional** — only needed for the Live Practice slide
+preview (`GET /practice/{id}/slide/preview`, see `routers/practice.py` and
+`utils/file_utils.py::convert_pptx_to_pdf`), which converts an attached
+`.pptx` to PDF on first request so the browser can render it live while
+practicing. Without it, that one endpoint returns 503; everything else
+(including practice itself) works fine regardless. Unlike `ffmpeg`, it does
+not need to be on `PATH` — common install locations are checked directly:
+
+```bash
+# Windows (winget)
+winget install --id TheDocumentFoundation.LibreOffice -e
+
+# macOS
+brew install --cask libreoffice
+
+# Debian/Ubuntu
+sudo apt install libreoffice
+```
+
 ### 3. Start PostgreSQL
 
 Sessions are persisted to PostgreSQL. Easiest local option, Docker:

@@ -4,6 +4,7 @@ import type {
   SessionCreateResponse,
   EvaluationReport,
   PreliminaryEvaluation,
+  RecommendationList,
   PracticeSession,
   PracticeEvaluation,
   EvaluationMode,
@@ -67,6 +68,11 @@ export async function getPreliminary(
   return data
 }
 
+export async function getRecommendations(id: string): Promise<RecommendationList> {
+  const { data } = await api.get(`/sessions/${id}/recommendations`)
+  return data
+}
+
 export async function retrySession(id: string): Promise<{ message: string }> {
   const { data } = await api.post(`/sessions/${id}/retry`)
   return data
@@ -110,6 +116,14 @@ export async function uploadPracticeSlide(id: string, file: File): Promise<Pract
     headers: { 'Content-Type': 'multipart/form-data' },
   })
   return data
+}
+
+// Points an <iframe>/<a> straight at the backend (proxied via /api, see
+// vite.config.ts) rather than going through axios, since this is rendered
+// directly by the browser, not consumed as JSON. The backend converts the
+// attached .pptx to PDF on demand via LibreOffice (see routers/practice.py).
+export function practiceSlidePreviewUrl(practiceSessionId: string): string {
+  return `/api/practice/${practiceSessionId}/slide/preview`
 }
 
 export async function uploadPracticeResume(id: string, file: File): Promise<PracticeSession> {
