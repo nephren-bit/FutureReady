@@ -5,6 +5,9 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
+    // Cloudflare Quick Tunnel hands the dev server a *.trycloudflare.com Host
+    // header, which Vite rejects by default ("Blocked request").
+    allowedHosts: ['.trycloudflare.com'],
     proxy: {
       '/api': {
         target: 'http://localhost:8000',

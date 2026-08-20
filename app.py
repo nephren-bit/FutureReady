@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from providers.registry import provider_registry
-from routers import admin, analyze, auth, evaluate, extract, practice, sessions
+from routers import admin, admin_resources, analyze, auth, evaluate, extract, practice, sessions
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -81,6 +81,11 @@ app.include_router(auth.router)
 # Account administration (Project 1 report, permission matrix row 11).
 # Every route inside is gated on `require_admin`.
 app.include_router(admin.router)
+
+# Learning-resource catalog (permission matrix row 12). Separate module from
+# account administration: the two govern unrelated things and share only the
+# /admin prefix and the require_admin dependency.
+app.include_router(admin_resources.router)
 
 # Primary interface: session-centric evaluation workflow.
 app.include_router(sessions.router)

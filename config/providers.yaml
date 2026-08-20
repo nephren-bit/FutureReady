@@ -12,4 +12,4 @@
 # BaseReasoningEngine implementation in providers/registry.py and pointing
 # this key at its name.)
 
-reasoning_engine: lmstudio
+reasoning_engine: gemini

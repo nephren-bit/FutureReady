@@ -10,6 +10,7 @@ import {
 } from '@phosphor-icons/react'
 import { adminGetStats, adminListUsers, adminUpdateUser, apiErrorMessage } from '../lib/api'
 import { useAuth } from '../lib/auth-context'
+import AdminTabs from '../components/AdminTabs'
 import { cn } from '../lib/utils'
 import type { AdminStats, User, UserRole } from '../types/auth'
 
@@ -86,6 +87,8 @@ export default function Admin() {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+      <AdminTabs />
+
       <header className="mb-6">
         <h1 className="text-2xl font-semibold text-text-primary dark:text-text-primary-dark">
           Quản trị tài khoản

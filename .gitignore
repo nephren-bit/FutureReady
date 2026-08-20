@@ -29,3 +29,6 @@ err.log
 .DS_Store
 .vscode/
 .idea/
+
+docs/
+specs/

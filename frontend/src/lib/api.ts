@@ -7,6 +7,11 @@ import type {
   User,
   UserListResponse,
   UserRole,
+  LearningResource,
+  ResourceFilters,
+  ResourceInput,
+  ResourceListResponse,
+  ResourceStats,
 } from '../types/auth'
 import type {
   Session,
@@ -270,5 +275,34 @@ export async function adminUpdateUser(
 
 export async function adminGetStats(): Promise<AdminStats> {
   const { data } = await api.get('/admin/stats')
+  return data
+}
+
+// ---------------------------------------------------------------------------
+// Learning-resource catalog (admin only)
+// ---------------------------------------------------------------------------
+
+export async function adminListResources(
+  filters: ResourceFilters = {}
+): Promise<ResourceListResponse> {
+  const { data } = await api.get('/admin/resources', { params: filters })
+  return data
+}
+
+export async function adminGetResourceStats(): Promise<ResourceStats> {
+  const { data } = await api.get('/admin/resources/stats')
+  return data
+}
+
+export async function adminCreateResource(payload: ResourceInput): Promise<LearningResource> {
+  const { data } = await api.post('/admin/resources', payload)
+  return data
+}
+
+export async function adminUpdateResource(
+  resourceId: string,
+  payload: Partial<ResourceInput>
+): Promise<LearningResource> {
+  const { data } = await api.patch(`/admin/resources/${resourceId}`, payload)
   return data
 }

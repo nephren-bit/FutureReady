@@ -67,3 +67,92 @@ export function roleLabel(user: Pick<User, 'role' | 'is_admin'>): string {
   if (user.is_admin) return 'Quản trị viên'
   return user.role === 'lecturer' ? 'Giảng viên' : 'Người học'
 }
+
+// ---------------------------------------------------------------------------
+// Learning-resource catalog (permission matrix row 12)
+// ---------------------------------------------------------------------------
+
+// Mirrors `SkillTag` in models/resource_models.py. A controlled vocabulary,
+// not free text: the Recommendation Engine matches these against a session's
+// weakest sub-scores, so a tag it does not know matches nothing.
+export type SkillTag =
+  | 'speaking'
+  | 'confidence'
+  | 'presentation'
+  | 'critical_thinking'
+  | 'interview'
+  | 'general'
+
+export type ResourceType = 'video' | 'article' | 'course' | 'exercise'
+
+export const SKILL_TAG_LABELS: Record<SkillTag, string> = {
+  speaking: 'Nói',
+  confidence: 'Tự tin',
+  presentation: 'Thuyết trình',
+  critical_thinking: 'Tư duy phản biện',
+  interview: 'Phỏng vấn',
+  general: 'Chung',
+}
+
+export const RESOURCE_TYPE_LABELS: Record<ResourceType, string> = {
+  video: 'Video',
+  article: 'Bài viết',
+  course: 'Khoá học',
+  exercise: 'Bài tập',
+}
+
+export interface LearningResource {
+  id: string
+  title: string
+  url: string
+  resource_type: ResourceType
+  platform: string | null
+  language: string | null
+  speaker: string | null
+  source: string | null
+  description: string | null
+  skill_tags: SkillTag[]
+  category_label: string | null
+  is_active: boolean
+  created_at: string | null
+  /** How many recommendations point here — why hiding exists instead of deleting. */
+  recommendation_count: number
+}
+
+export interface ResourceListResponse {
+  total: number
+  items: LearningResource[]
+}
+
+export interface ResourceStats {
+  total: number
+  active: number
+  hidden: number
+  by_type: Record<string, number>
+  by_skill_tag: Record<string, number>
+  untagged: number
+}
+
+export interface ResourceFilters {
+  search?: string
+  resource_type?: ResourceType
+  skill_tag?: SkillTag
+  language?: string
+  is_active?: boolean
+  limit?: number
+  offset?: number
+}
+
+export interface ResourceInput {
+  title: string
+  url: string
+  resource_type: ResourceType
+  platform?: string | null
+  language?: string | null
+  speaker?: string | null
+  source?: string | null
+  description?: string | null
+  skill_tags: SkillTag[]
+  category_label?: string | null
+  is_active?: boolean
+}

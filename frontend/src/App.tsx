@@ -13,6 +13,7 @@ import Login from './pages/Login'
 import Register from './pages/Register'
 import Account from './pages/Account'
 import Admin from './pages/Admin'
+import AdminResources from './pages/AdminResources'
 
 export default function App() {
   return (
@@ -47,6 +48,14 @@ export default function App() {
                           element={
                             <RequireAdmin>
                               <Admin />
+                            </RequireAdmin>
+                          }
+                        />
+                        <Route
+                          path="quan-tri/tai-nguyen"
+                          element={
+                            <RequireAdmin>
+                              <AdminResources />
                             </RequireAdmin>
                           }
                         />
