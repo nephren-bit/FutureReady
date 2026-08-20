@@ -53,6 +53,112 @@ def _uuid_pk() -> Mapped[uuid.UUID]:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Accounts and authorization (Project 1 report, section 3.6 -- the function
+# permission matrix, Bang 3.3).
+#
+# The report describes three authenticated actor groups that inherit upward:
+# Nguoi hoc (learner) < Giang vien (lecturer) < Quan tri vien (admin), plus an
+# unauthenticated Khach vang lai who may only view the landing page, register,
+# and log in.
+#
+# Those four columns are modelled here as `role` (learner | lecturer) plus a
+# SEPARATE `is_admin` flag rather than a three-value `role`, for one specific
+# reason: users are allowed to change their own role from the settings screen.
+# If administrator were a value of `role`, that same endpoint would be a
+# privilege-escalation hole -- any account could promote itself by sending
+# `{"role": "admin"}`. With admin as its own flag, no request body reaching a
+# self-service endpoint can grant it; it is set only by the CLI in
+# `scripts/create_admin.py`. The permission matrix is reproduced exactly
+# either way.
+# ---------------------------------------------------------------------------
+
+
+class UserRole(str, enum.Enum):
+    """
+    The self-selectable roles, matching the report's actor list.
+
+    Administrator is deliberately absent -- it is `UserORM.is_admin`, which no
+    self-service endpoint can set. See the section comment above.
+    """
+
+    LEARNER = "learner"
+    """AC-02 Nguoi hoc: the primary actor -- own sessions, own reports, practice."""
+
+    LECTURER = "lecturer"
+    """AC-03 Giang vien: inherits learner, plus other learners' reports and scoring weights."""
+
+
+class UserORM(Base):
+    """
+    One account.
+
+    Field notes where the choice is not obvious:
+
+    * `email` is stored lowercased and is unique. Case-preserving storage
+      would let `An@x.com` and `an@x.com` register as two accounts that every
+      human reader would take for one.
+    * `password_hash` is nullable so an account can exist without a password,
+      which is what a future SSO-only account needs (ERD section 2.1). A NULL
+      hash can never satisfy a login: `verify_password` is not reached.
+    * `is_verified` defaults to false and is informational for now -- it marks
+      accounts an institution has confirmed. It does NOT gate login, because
+      the report's registration flow puts the user straight into the product
+      with no approval queue.
+    * `is_active` is how an account gets disabled. Deactivating rather than
+      deleting keeps the session history that hangs off `analysis_sessions`
+      intact and attributable.
+    * `recording_consent_ack_at` records when a teacher acknowledged that they
+      are responsible for telling people they are being recorded. The
+      protection that matters belongs at the recording layer, not the account
+      layer -- a role label never stopped anyone from filming another person.
+    """
+
+    __tablename__ = "users"
+    __table_args__ = (UniqueConstraint("email", name="uq_users_email"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+
+    email: Mapped[str] = mapped_column(String(320), nullable=False)
+    password_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    full_name: Mapped[str] = mapped_column(String(160), nullable=False, default="")
+
+    role: Mapped[UserRole] = mapped_column(
+        Enum(UserRole, name="user_role", values_callable=lambda obj: [e.value for e in obj]),
+        nullable=False,
+        default=UserRole.LEARNER,
+    )
+    is_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    preferred_language: Mapped[str] = mapped_column(String(8), nullable=False, default="vi")
+    recording_consent_ack_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    sessions: Mapped[list["AnalysisSession"]] = relationship(back_populates="owner")
+
+    @property
+    def can_view_other_learners(self) -> bool:
+        """Row 9 of the permission matrix: lecturers and admins, not learners."""
+        return self.is_admin or self.role is UserRole.LECTURER
+
+    @property
+    def effective_role_label(self) -> str:
+        """How the role reads in the UI, with the admin flag taking precedence."""
+        if self.is_admin:
+            return "admin"
+        return self.role.value
+
+
 class EvaluationMode(str, enum.Enum):
     """Which of the two supported workflows a session runs."""
 
@@ -169,6 +275,13 @@ class AnalysisSession(Base):
     # only a free-text student name and wiring accounts up later would mean a
     # migration plus a manual reconciliation pass over thousands of historical
     # rows; two nullable columns today cost nothing.
+    # Who owns this session. Nullable because sessions created before accounts
+    # existed have no owner, and the teacher-recording flow creates sessions
+    # for a student who may have no account at all.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     student_user_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, nullable=True, doc="Set once a student claims this session into their account."
     )
@@ -217,6 +330,7 @@ class AnalysisSession(Base):
     recommendations: Mapped[list["RecommendationORM"]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
     )
+    owner: Mapped["UserORM | None"] = relationship(back_populates="sessions")
     pose_feature: Mapped["PoseFeatureORM | None"] = relationship(
         back_populates="session", uselist=False, cascade="all, delete-orphan"
     )

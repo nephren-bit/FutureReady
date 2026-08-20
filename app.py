@@ -23,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from providers.registry import provider_registry
-from routers import analyze, evaluate, extract, practice, sessions
+from routers import admin, analyze, auth, evaluate, extract, practice, sessions
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -73,6 +73,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Accounts. Registered before everything else because every other router's
+# authorization depends on the tokens this one issues.
+app.include_router(auth.router)
+
+# Account administration (Project 1 report, permission matrix row 11).
+# Every route inside is gated on `require_admin`.
+app.include_router(admin.router)
 
 # Primary interface: session-centric evaluation workflow.
 app.include_router(sessions.router)

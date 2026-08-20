@@ -1,5 +1,14 @@
 import axios from 'axios'
 import type {
+  AdminStats,
+  AdminUserFilters,
+  RegisterPayload,
+  TokenResponse,
+  User,
+  UserListResponse,
+  UserRole,
+} from '../types/auth'
+import type {
   Session,
   SessionCreateResponse,
   EvaluationReport,
@@ -148,4 +157,118 @@ export function practiceStreamUrl(
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const base = `${protocol}//${window.location.host}/api/practice/stream?language=${encodeURIComponent(language)}&audio_format=${audioFormat}`
   return practiceSessionId ? `${base}&practice_session_id=${practiceSessionId}` : base
+}
+
+// ---------------------------------------------------------------------------
+// Authentication and account administration
+// ---------------------------------------------------------------------------
+
+const TOKEN_STORAGE_KEY = 'futureready.token'
+
+export function getStoredToken(): string | null {
+  return localStorage.getItem(TOKEN_STORAGE_KEY)
+}
+
+export function storeToken(token: string): void {
+  localStorage.setItem(TOKEN_STORAGE_KEY, token)
+}
+
+export function clearStoredToken(): void {
+  localStorage.removeItem(TOKEN_STORAGE_KEY)
+}
+
+// Attach the token to every request from one place. Doing it per call site
+// guarantees that whichever call someone adds next is the one that forgets.
+api.interceptors.request.use((config) => {
+  const token = getStoredToken()
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
+
+// A 401 means the token is gone, expired, or was signed with another key --
+// none of which the user can fix by retrying. Drop it so the app falls back to
+// the signed-out state instead of looping on requests that cannot succeed.
+//
+// 403 is deliberately NOT handled here: it means the token is perfectly valid
+// and this account simply may not do that. Clearing it would sign the user out
+// for clicking something they lack the role for, which is not the same thing.
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 401) clearStoredToken()
+    return Promise.reject(error)
+  }
+)
+
+/** The server's message for a failed request, falling back to something readable. */
+export function apiErrorMessage(error: unknown, fallback = 'Đã xảy ra lỗi, vui lòng thử lại.'): string {
+  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+  if (typeof detail === 'string') return detail
+  // FastAPI validation errors arrive as a list of {loc, msg, type}.
+  if (Array.isArray(detail) && detail.length > 0) {
+    const first = detail[0] as { msg?: string }
+    if (typeof first?.msg === 'string') return first.msg.replace(/^Value error,\s*/, '')
+  }
+  return fallback
+}
+
+export async function register(payload: RegisterPayload): Promise<TokenResponse> {
+  const { data } = await api.post('/auth/register', payload)
+  return data
+}
+
+export async function login(email: string, password: string): Promise<TokenResponse> {
+  const { data } = await api.post('/auth/login', { email, password })
+  return data
+}
+
+export async function getCurrentUser(): Promise<User> {
+  const { data } = await api.get('/auth/me')
+  return data
+}
+
+export async function updateProfile(payload: {
+  full_name?: string
+  preferred_language?: string
+}): Promise<User> {
+  const { data } = await api.patch('/auth/me', payload)
+  return data
+}
+
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string
+): Promise<void> {
+  await api.patch('/auth/me/password', {
+    current_password: currentPassword,
+    new_password: newPassword,
+  })
+}
+
+export async function changeOwnRole(role: UserRole): Promise<User> {
+  const { data } = await api.patch('/auth/me/role', { role })
+  return data
+}
+
+export async function acknowledgeRecordingConsent(): Promise<User> {
+  const { data } = await api.post('/auth/me/recording-consent')
+  return data
+}
+
+export async function adminListUsers(filters: AdminUserFilters = {}): Promise<UserListResponse> {
+  const { data } = await api.get('/admin/users', { params: filters })
+  return data
+}
+
+export async function adminUpdateUser(
+  userId: string,
+  payload: { role?: UserRole; is_verified?: boolean; is_active?: boolean }
+): Promise<User> {
+  const { data } = await api.patch(`/admin/users/${userId}`, payload)
+  return data
+}
+
+export async function adminGetStats(): Promise<AdminStats> {
+  const { data } = await api.get('/admin/stats')
+  return data
 }

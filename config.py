@@ -64,6 +64,12 @@ class Settings:
             Engine is later updated.
         FEATURE_FUSION_VERSION: Version tag stamped onto every fused
             `UnifiedFeature` row, for the same reproducibility reason.
+        JWT_SECRET_KEY: Signing key for access tokens. Required -- there is
+            deliberately no default, since a shipped fallback key would let
+            anyone with the source forge an administrator token.
+        JWT_ALGORITHM: JWT signing algorithm (HS256 by default).
+        JWT_EXPIRE_MINUTES: Access-token lifetime in minutes. Also bounds how
+            long a revoked role stays effective in an already-issued token.
     """
 
     GEMINI_API_KEY: Final[str] = os.getenv("GEMINI_API_KEY", "")
@@ -103,6 +109,14 @@ class Settings:
     SCORING_ENGINE_VERSION: Final[str] = os.getenv("SCORING_ENGINE_VERSION", "1.0.0")
     FEATURE_FUSION_VERSION: Final[str] = os.getenv("FEATURE_FUSION_VERSION", "1.0.0")
 
+    # --- Authentication (see utils/security.py) ---------------------------
+    # JWT_SECRET_KEY has no usable default on purpose: a hard-coded fallback
+    # would let anyone holding the source forge a token for any account,
+    # including an administrator. `validate()` refuses to start without it.
+    JWT_SECRET_KEY: Final[str] = os.getenv("JWT_SECRET_KEY", "")
+    JWT_ALGORITHM: Final[str] = os.getenv("JWT_ALGORITHM", "HS256")
+    JWT_EXPIRE_MINUTES: Final[int] = int(os.getenv("JWT_EXPIRE_MINUTES", "720"))
+
     def validate(self) -> None:
         """
         Validate that required settings are present.
@@ -134,6 +148,14 @@ class Settings:
                 "loaded in LM Studio (see the \"My Models\" tab, or "
                 f"GET {self.LMSTUDIO_BASE_URL}/models)."
             )
+        if not self.JWT_SECRET_KEY:
+            raise RuntimeError(
+                "JWT_SECRET_KEY is not set. Add it to your .env file -- generate one with:\n"
+                "  python -c \"import secrets; print(secrets.token_urlsafe(64))\"\n"
+                "There is no default: a shipped fallback key would let anyone holding "
+                "this source forge a token for any account, including an administrator."
+            )
+
         self.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
