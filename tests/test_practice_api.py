@@ -9,7 +9,6 @@ every Layer 1/2/6 AI call mocked -- same approach as test_sessions_api.py.
 from __future__ import annotations
 
 import time
-from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -23,7 +22,7 @@ from models.responses import ReasoningPayload
 
 
 @pytest.fixture()
-def client(monkeypatch, tmp_path):
+def client(monkeypatch, tmp_path, stub_reasoning_engine):
     import app as app_module
     import routers.practice as practice_router
 
@@ -74,13 +73,8 @@ def client(monkeypatch, tmp_path):
             word_count=11, sentence_count=1, vocabulary_diversity=0.85, has_opening=True, has_conclusion=True
         ),
     )
-    monkeypatch.setattr(
-        "services.lmstudio_service.lmstudio_service.generate_structured",
-        AsyncMock(
-            return_value=ReasoningPayload(
-                strengths=["Confident opening"], presentation_feedback="Nice and steady pace throughout."
-            )
-        ),
+    stub_reasoning_engine.reasoning = ReasoningPayload(
+        strengths=["Confident opening"], presentation_feedback="Nice and steady pace throughout."
     )
 
     with TestClient(app_module.app) as test_client:

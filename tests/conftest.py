@@ -5,8 +5,20 @@ Shared pytest fixtures for the FutureReady test suite.
 
 Sets a dummy `GEMINI_API_KEY` before any application module is imported
 (config.py reads it at import time), so the test suite never needs a real
-API key or network access. Gemini itself is always mocked in endpoint
-tests — no test in this suite makes a real network call.
+API key or network access.
+
+**No test in this suite makes a real network call**, and the autouse
+`stub_reasoning_engine` fixture below is what enforces that. It replaces
+whatever `config/providers.yaml` selects with an in-process stub, so which
+provider that file happens to name — gemini, claude, lmstudio — has no
+effect on the suite at all.
+
+Mocking one concrete provider (as this suite used to do) is not the same
+guarantee: it only holds while `providers.yaml` names that exact provider,
+and the day someone flips that line for local development the mock stops
+intercepting anything, a real request goes out carrying the dummy key
+above, and a dozen tests fail with an authentication error that has
+nothing to do with what they were testing.
 """
 
 from __future__ import annotations
@@ -31,6 +43,70 @@ from models.features import (
     TranscriptFeature,
     UnifiedFeatureModel,
 )
+
+from models.responses import ReasoningPayload, RecommendationPayload
+from providers.registry import provider_registry
+from services.reasoning.base import BaseReasoningEngine
+
+
+class StubReasoningEngine(BaseReasoningEngine):
+    """
+    An in-process `BaseReasoningEngine` that answers from fixtures.
+
+    Dispatches on `response_model` because one session's pipeline calls the
+    engine with more than one schema over its lifetime (preliminary
+    `ReasoningPayload`, final `ReasoningPayload`, then
+    `RecommendationPayload`), so a single fixed return value cannot serve
+    them all.
+
+    Tests that care about the answer assign to `reasoning` / `recommendation`,
+    or set `error` to make the engine raise.
+    """
+
+    def __init__(self) -> None:
+        self.reasoning = ReasoningPayload()
+        self.recommendation = RecommendationPayload()
+        self.error: Exception | None = None
+        self.calls: list[tuple[str, type]] = []
+
+    @property
+    def name(self) -> str:
+        """Stamped onto `reasoning_engine_name`; deliberately not a real provider's name."""
+        return "stub"
+
+    @property
+    def version(self) -> str | None:
+        """Stamped onto `reasoning_engine_version`."""
+        return "test"
+
+    async def generate_structured(self, prompt: str, response_model: type):
+        """Return the fixture matching `response_model`, or raise `error` if one is set."""
+        self.calls.append((prompt, response_model))
+        if self.error is not None:
+            raise self.error
+        if response_model is RecommendationPayload:
+            return self.recommendation
+        return self.reasoning
+
+
+@pytest.fixture(autouse=True)
+def stub_reasoning_engine():
+    """
+    Force every test onto `StubReasoningEngine`, whatever `providers.yaml` says.
+
+    Autouse on purpose: the guarantee worth having is "no test can reach a
+    real provider", and that only holds if it applies to tests nobody
+    remembered to opt in. Patching the registry's cached instance covers
+    every consumer at once, since `EvaluationWorkflowManager`,
+    `PracticeSessionManager`, and `app.py` all resolve their engine through
+    `provider_registry.get_reasoning_engine()` and never import a concrete
+    engine class.
+    """
+    stub = StubReasoningEngine()
+    previous = provider_registry._reasoning_engine
+    provider_registry._reasoning_engine = stub
+    yield stub
+    provider_registry._reasoning_engine = previous
 
 
 @pytest.fixture()

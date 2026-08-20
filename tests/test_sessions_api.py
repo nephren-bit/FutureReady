@@ -14,7 +14,6 @@ observe progress.
 from __future__ import annotations
 
 import time
-from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -43,7 +42,7 @@ async def _fake_generate_structured(prompt: str, response_model: type):
 
 
 @pytest.fixture()
-def client(monkeypatch, sample_slide_feature):
+def client(monkeypatch, sample_slide_feature, stub_reasoning_engine):
     import app as app_module
     import routers.sessions as sessions_router
 
@@ -110,10 +109,7 @@ def client(monkeypatch, sample_slide_feature):
             word_count=10, sentence_count=1, vocabulary_diversity=0.8, has_opening=True, has_conclusion=True
         ),
     )
-    monkeypatch.setattr(
-        "services.lmstudio_service.lmstudio_service.generate_structured",
-        AsyncMock(side_effect=_fake_generate_structured),
-    )
+    stub_reasoning_engine.generate_structured = _fake_generate_structured
 
     with TestClient(app_module.app) as test_client:
         yield test_client

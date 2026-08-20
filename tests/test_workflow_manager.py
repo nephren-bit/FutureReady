@@ -93,37 +93,22 @@ def mock_orchestrator(sample_slide_feature: SlideFeature):
     return orchestrator
 
 
-def _dispatching_generate_structured(reasoning_payload: ReasoningPayload, recommendation_payload: RecommendationPayload):
-    """
-    A `generate_structured(prompt, response_model)` fake that returns the
-    right fixture based on `response_model`, since a session's pipeline
-    calls it with three different schemas (preliminary `ReasoningPayload`,
-    final `ReasoningPayload`, and `RecommendationPayload`) over its
-    lifetime — a single fixed `return_value` mock can't serve all three.
-    """
-
-    async def _fake(prompt: str, response_model: type):
-        if response_model is RecommendationPayload:
-            return recommendation_payload
-        return reasoning_payload
-
-    return _fake
-
-
 @pytest.fixture()
-def manager(mock_orchestrator, monkeypatch):
-    mgr = EvaluationWorkflowManager(orchestrator=mock_orchestrator)
-    fake_reasoning = ReasoningPayload(
+def manager(mock_orchestrator, stub_reasoning_engine):
+    """
+    A workflow manager wired to the stub engine from conftest.
+
+    `stub_reasoning_engine` is autouse, so it is already installed; taking it
+    as an argument here is only how this fixture reaches the instance to load
+    its payloads into.
+    """
+    stub_reasoning_engine.reasoning = ReasoningPayload(
         strengths=["Clear structure"],
         weaknesses=["Could improve pacing"],
         improvement_plan=["Practice pausing between points"],
         presentation_feedback="Solid overall delivery.",
     )
-    monkeypatch.setattr(
-        "services.lmstudio_service.lmstudio_service.generate_structured",
-        AsyncMock(side_effect=_dispatching_generate_structured(fake_reasoning, RecommendationPayload())),
-    )
-    return mgr
+    return EvaluationWorkflowManager(orchestrator=mock_orchestrator)
 
 
 class TestPresentationHappyPath:
@@ -141,7 +126,7 @@ class TestPresentationHappyPath:
 
         report = manager.get_report(db_session, session.id)
         assert report.presentation_feedback == "Solid overall delivery."
-        assert report.reasoning_engine_name == "lmstudio"
+        assert report.reasoning_engine_name == "stub"
         assert session.score_result.overall_score >= 0
         assert session.unified_feature is not None
 
@@ -184,7 +169,7 @@ class TestPreliminaryEvaluation:
         prelim = manager.get_preliminary_evaluation(db_session, session.id, dbm.EvaluationStage.SLIDE)
         assert prelim.stage == dbm.EvaluationStage.SLIDE
         assert 0 <= prelim.overall_score <= 100
-        assert prelim.reasoning_engine_name == "lmstudio"
+        assert prelim.reasoning_engine_name == "stub"
         assert prelim.presentation_feedback == "Solid overall delivery."
 
         # The video hasn't been uploaded yet, so its preliminary evaluation doesn't exist.
@@ -265,10 +250,12 @@ class TestRecommendationEngine:
             db_session.refresh(resource)
         return resources
 
-    async def test_recommendations_generated_after_completion(self, db_session, mock_orchestrator, monkeypatch) -> None:
+    async def test_recommendations_generated_after_completion(
+        self, db_session, mock_orchestrator, stub_reasoning_engine
+    ) -> None:
         resources = self._seed_resources(db_session)
-        fake_reasoning = ReasoningPayload(presentation_feedback="Solid overall delivery.")
-        fake_recommendations = RecommendationPayload(
+        stub_reasoning_engine.reasoning = ReasoningPayload(presentation_feedback="Solid overall delivery.")
+        stub_reasoning_engine.recommendation = RecommendationPayload(
             picks=[
                 RecommendationItem(
                     resource_id=str(resources[0].id),
@@ -276,10 +263,6 @@ class TestRecommendationEngine:
                     target_skill_tags=["confidence"],
                 )
             ]
-        )
-        monkeypatch.setattr(
-            "services.lmstudio_service.lmstudio_service.generate_structured",
-            AsyncMock(side_effect=_dispatching_generate_structured(fake_reasoning, fake_recommendations)),
         )
         manager = EvaluationWorkflowManager(orchestrator=mock_orchestrator)
 
@@ -293,12 +276,14 @@ class TestRecommendationEngine:
         assert recs[0].rank == 1
         assert recs[0].resource_id == resources[0].id
         assert recs[0].generated_by == "llm"
-        assert recs[0].reasoning_engine_name == "lmstudio"
+        assert recs[0].reasoning_engine_name == "stub"
 
-    async def test_invalid_resource_id_pick_is_dropped(self, db_session, mock_orchestrator, monkeypatch) -> None:
+    async def test_invalid_resource_id_pick_is_dropped(
+        self, db_session, mock_orchestrator, stub_reasoning_engine
+    ) -> None:
         self._seed_resources(db_session)
-        fake_reasoning = ReasoningPayload(presentation_feedback="Solid overall delivery.")
-        fake_recommendations = RecommendationPayload(
+        stub_reasoning_engine.reasoning = ReasoningPayload(presentation_feedback="Solid overall delivery.")
+        stub_reasoning_engine.recommendation = RecommendationPayload(
             picks=[
                 RecommendationItem(
                     resource_id=str(uuid.uuid4()),  # does not match any seeded resource
@@ -306,10 +291,6 @@ class TestRecommendationEngine:
                     target_skill_tags=["confidence"],
                 )
             ]
-        )
-        monkeypatch.setattr(
-            "services.lmstudio_service.lmstudio_service.generate_structured",
-            AsyncMock(side_effect=_dispatching_generate_structured(fake_reasoning, fake_recommendations)),
         )
         manager = EvaluationWorkflowManager(orchestrator=mock_orchestrator)
 
@@ -333,7 +314,7 @@ class TestRecommendationEngine:
 
 
 class TestFailureAndRetry:
-    async def test_slide_analysis_failure_then_retry_succeeds(self, db_session, mock_orchestrator, monkeypatch) -> None:
+    async def test_slide_analysis_failure_then_retry_succeeds(self, db_session, mock_orchestrator) -> None:
         calls = {"count": 0}
         original_extract_slide = mock_orchestrator.extract_slide
 
@@ -345,10 +326,6 @@ class TestFailureAndRetry:
 
         mock_orchestrator.extract_slide = flaky_extract_slide
         manager = EvaluationWorkflowManager(orchestrator=mock_orchestrator)
-        monkeypatch.setattr(
-            "services.lmstudio_service.lmstudio_service.generate_structured",
-            AsyncMock(side_effect=_dispatching_generate_structured(ReasoningPayload(), RecommendationPayload())),
-        )
 
         session = manager.create_session(db_session, dbm.EvaluationMode.PRESENTATION)
         session = await manager.attach_slide(db_session, session.id, "/tmp/fake.pptx")
@@ -361,7 +338,7 @@ class TestFailureAndRetry:
         assert calls["count"] == 2
 
     async def test_preliminary_evaluation_failure_then_retry_succeeds(
-        self, db_session, mock_orchestrator, monkeypatch
+        self, db_session, mock_orchestrator, stub_reasoning_engine
     ) -> None:
         """
         A failure during the slide's own preliminary score/reasoning pass
@@ -370,20 +347,19 @@ class TestFailureAndRetry:
         re-extracting/re-analyzing the slide deck.
         """
         calls = {"count": 0}
-        real_reasoning = ReasoningPayload(presentation_feedback="Solid overall delivery.")
+        stub_reasoning_engine.reasoning = ReasoningPayload(presentation_feedback="Solid overall delivery.")
+
+        # Fail the very first engine call, then behave normally, so the retry
+        # path is exercised rather than a permanently broken engine.
+        original_generate = stub_reasoning_engine.generate_structured
 
         async def flaky_generate_structured(prompt, schema):
             calls["count"] += 1
             if calls["count"] == 1:
                 raise RuntimeError("Simulated reasoning-engine timeout")
-            if schema is RecommendationPayload:
-                return RecommendationPayload()
-            return real_reasoning
+            return await original_generate(prompt, schema)
 
-        monkeypatch.setattr(
-            "services.lmstudio_service.lmstudio_service.generate_structured",
-            AsyncMock(side_effect=flaky_generate_structured),
-        )
+        stub_reasoning_engine.generate_structured = flaky_generate_structured
         manager = EvaluationWorkflowManager(orchestrator=mock_orchestrator)
 
         session = manager.create_session(db_session, dbm.EvaluationMode.PRESENTATION)

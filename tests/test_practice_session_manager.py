@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import create_engine, pool
@@ -46,7 +45,7 @@ def db_session():
 
 
 @pytest.fixture()
-def manager(monkeypatch) -> PracticeSessionManager:
+def manager(monkeypatch, stub_reasoning_engine) -> PracticeSessionManager:
     from services.ai_orchestrator import ai_orchestrator
 
     monkeypatch.setattr(
@@ -84,13 +83,8 @@ def manager(monkeypatch) -> PracticeSessionManager:
             has_conclusion=False,
         ),
     )
-    monkeypatch.setattr(
-        "services.lmstudio_service.lmstudio_service.generate_structured",
-        AsyncMock(
-            return_value=ReasoningPayload(
-                strengths=["Clear pacing"], presentation_feedback="Solid delivery overall."
-            )
-        ),
+    stub_reasoning_engine.reasoning = ReasoningPayload(
+        strengths=["Clear pacing"], presentation_feedback="Solid delivery overall."
     )
     return PracticeSessionManager()
 
@@ -165,19 +159,16 @@ class TestPracticeFinalize:
 
         evaluation = manager.get_evaluation(db_session, session.id)
         assert 0 <= evaluation.overall_score <= 100
-        assert evaluation.reasoning_engine_name == "lmstudio"
+        assert evaluation.reasoning_engine_name == "stub"
         assert evaluation.presentation_feedback == "Solid delivery overall."
         # Audio-only material: resume/slide sub-scores are never populated.
         assert evaluation.resume_score is None
         assert evaluation.slide_score is None
 
     async def test_finalize_records_failure_on_reasoning_error(
-        self, db_session, manager: PracticeSessionManager, tmp_path: Path, monkeypatch
+        self, db_session, manager: PracticeSessionManager, tmp_path: Path, stub_reasoning_engine
     ) -> None:
-        monkeypatch.setattr(
-            "services.lmstudio_service.lmstudio_service.generate_structured",
-            AsyncMock(side_effect=RuntimeError("Gemini is down")),
-        )
+        stub_reasoning_engine.error = RuntimeError("Reasoning engine is down")
         session = manager.create_session(db_session)
         audio_path = tmp_path / "practice.wav"
         _write_dummy_audio(audio_path)
@@ -185,7 +176,7 @@ class TestPracticeFinalize:
 
         result = await manager.finalize(db_session, session.id)
         assert result.state == PracticeSessionState.FAILED
-        assert "Gemini is down" in result.error_message
+        assert "Reasoning engine is down" in result.error_message
 
 
 class TestLiveTip:
