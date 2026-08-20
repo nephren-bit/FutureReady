@@ -57,6 +57,14 @@ _BLINK_EAR_THRESHOLD = 0.21
 _EYE_CONTACT_YAW_PITCH_THRESHOLD_DEG = 15.0
 _EYE_OPENNESS_NORMALIZATION = 0.35
 
+# Where the nose tip sits between the eye line and the chin, in image space.
+# The face foreshortens as the head pitches down and the chin tucks toward the
+# neck, so this ratio rises the further down the subject looks. Its direction
+# is fixed by geometry; the exact cut-off is a calibration question, which is
+# why callers pass their own from the context profile (see
+# `analyzers/pose_analyzer.apply_head_pose_fallback`).
+_NOSE_DROP_DOWN_THRESHOLD = 0.62
+
 
 class FaceMeshAnalyzer(BaseAnalyzer[list[tuple[np.ndarray, float]], FaceMeshFeature]):
     """MediaPipe-based face mesh / head pose analyzer over sampled video frames (Layer 2D)."""
@@ -81,6 +89,7 @@ class FaceMeshAnalyzer(BaseAnalyzer[list[tuple[np.ndarray, float]], FaceMeshFeat
         pitch_values: list[float] = []
         roll_values: list[float] = []
         gaze_offsets: list[float] = []
+        nose_drop_ratios: list[float] = []
         face_centers: list[tuple[float, float]] = []
         frames_with_face = 0
 
@@ -116,6 +125,10 @@ class FaceMeshAnalyzer(BaseAnalyzer[list[tuple[np.ndarray, float]], FaceMeshFeat
 
                 gaze_offsets.append(self._gaze_offset(landmarks))
 
+                nose_drop = self._nose_drop_ratio(landmarks)
+                if nose_drop is not None:
+                    nose_drop_ratios.append(nose_drop)
+
         total_frames = len(data)
         if frames_with_face == 0:
             return FaceMeshFeature(frames_analyzed=total_frames, faces_detected_ratio=0.0)
@@ -126,6 +139,7 @@ class FaceMeshAnalyzer(BaseAnalyzer[list[tuple[np.ndarray, float]], FaceMeshFeat
         ) if ear_values else 0.0
 
         eye_contact_ratio = self._eye_contact_ratio(yaw_values, pitch_values, gaze_offsets)
+        head_up_ratio = self._head_up_ratio(nose_drop_ratios)
         head_movement_score = self._head_movement_score(yaw_values, pitch_values, roll_values)
         face_stability_ratio = self._face_stability_ratio(face_centers, width_height=(1.0, 1.0))
 
@@ -135,6 +149,7 @@ class FaceMeshAnalyzer(BaseAnalyzer[list[tuple[np.ndarray, float]], FaceMeshFeat
             blink_rate_per_min=blink_rate,
             eye_openness_mean=eye_openness_mean,
             eye_contact_ratio=eye_contact_ratio,
+            head_up_ratio=head_up_ratio,
             head_pose_pitch_std=round(statistics.pstdev(pitch_values), 2) if len(pitch_values) > 1 else 0.0,
             head_pose_yaw_std=round(statistics.pstdev(yaw_values), 2) if len(yaw_values) > 1 else 0.0,
             head_pose_roll_std=round(statistics.pstdev(roll_values), 2) if len(roll_values) > 1 else 0.0,
@@ -243,6 +258,39 @@ class FaceMeshAnalyzer(BaseAnalyzer[list[tuple[np.ndarray, float]], FaceMeshFeat
         left_offset = np.linalg.norm(left_iris - left_mid) / left_width
         right_offset = np.linalg.norm(right_iris - right_mid) / right_width
         return float((left_offset + right_offset) / 2.0)
+
+    @staticmethod
+    def _nose_drop_ratio(landmarks: Any) -> float | None:
+        """
+        Where the nose tip sits between the eye line and the chin, 0 at the
+        eye line and 1 at the chin.
+
+        A head-pose proxy that needs no camera calibration and has no sign
+        ambiguity: pitching the head down tucks the chin toward the neck
+        faster than it moves the nose, so the ratio rises. Used only as the
+        fallback for `PoseFeature.head_up_ratio` when the shoulders were not
+        visible -- in a classroom the shoulder line is the more reliable
+        reference, and this one is not.
+        """
+        try:
+            eye_line_y = (landmarks[33].y + landmarks[263].y) / 2.0
+            nose_y = landmarks[_POSE_LANDMARK_IDX["nose_tip"]].y
+            chin_y = landmarks[_POSE_LANDMARK_IDX["chin"]].y
+        except IndexError:
+            return None
+
+        face_height = chin_y - eye_line_y
+        if face_height <= 0:
+            return None
+        return float((nose_y - eye_line_y) / face_height)
+
+    @staticmethod
+    def _head_up_ratio(nose_drop_ratios: list[float]) -> float | None:
+        """Fraction of frames where the head is not tucked down, or None if no face was found."""
+        if not nose_drop_ratios:
+            return None
+        up_frames = sum(1 for ratio in nose_drop_ratios if ratio < _NOSE_DROP_DOWN_THRESHOLD)
+        return round(up_frames / len(nose_drop_ratios), 3)
 
     @staticmethod
     def _face_center(landmarks: Any, width: int, height: int) -> tuple[float, float]:

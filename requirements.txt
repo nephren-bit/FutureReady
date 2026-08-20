@@ -21,6 +21,11 @@ opencv-python-headless==4.10.0.84
 # Layer 2 - AI Vision & Speech Intelligence
 openai-whisper==20240930
 torch==2.5.1
+# mediapipe covers two analyzers: Face Mesh (analyzers/facemesh_analyzer.py)
+# and Pose/BlazePose (analyzers/pose_analyzer.py). Both use the legacy
+# `mp.solutions` API rather than Holistic or the Tasks API -- see the module
+# docstring in analyzers/pose_analyzer.py for why. No .task model file needs
+# shipping: the legacy solutions bundle their own weights, so this runs offline.
 mediapipe==0.10.14
 hsemotion-onnx==0.3.1
 onnxruntime==1.19.2

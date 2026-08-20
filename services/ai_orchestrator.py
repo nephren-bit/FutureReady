@@ -25,6 +25,7 @@ from pathlib import Path
 from analyzers.cv_analyzer import ResumeAnalyzer
 from analyzers.emotion_analyzer import EmotionAnalyzer
 from analyzers.facemesh_analyzer import FaceMeshAnalyzer
+from analyzers.pose_analyzer import PoseAnalyzer, apply_head_pose_fallback
 from analyzers.slide_analyzer import SlideAnalyzer
 from analyzers.speech_analyzer import SpeechAnalyzer
 from analyzers.transcript_analyzer import TranscriptAnalyzer
@@ -36,6 +37,7 @@ from models.features import (
     AudioFeature,
     EmotionFeature,
     FaceMeshFeature,
+    PoseFeature,
     ResumeAnalysisFeature,
     ResumeFeature,
     SlideAnalysisFeature,
@@ -70,6 +72,7 @@ class AIOrchestrator:
         speech_analyzer: SpeechAnalyzer | None = None,
         emotion_analyzer: EmotionAnalyzer | None = None,
         facemesh_analyzer: FaceMeshAnalyzer | None = None,
+        pose_analyzer: PoseAnalyzer | None = None,
         fusion_engine: FeatureFusionEngine | None = None,
         scoring_engine: ScoringEngine | None = None,
         builder: PromptBuilder | None = None,
@@ -86,6 +89,7 @@ class AIOrchestrator:
         self._speech_analyzer = speech_analyzer or SpeechAnalyzer()
         self._emotion_analyzer = emotion_analyzer or EmotionAnalyzer()
         self._facemesh_analyzer = facemesh_analyzer or FaceMeshAnalyzer()
+        self._pose_analyzer = pose_analyzer or PoseAnalyzer()
 
         self._fusion_engine = fusion_engine or FeatureFusionEngine()
         self._scoring_engine = scoring_engine or ScoringEngine()
@@ -132,17 +136,41 @@ class AIOrchestrator:
         """Run the Whisper-based speech intelligence analyzer."""
         return self._speech_analyzer.analyze(audio_path)
 
-    def analyze_video_vision(
+    def analyze_video_all(
         self, video_path: Path
-    ) -> tuple[VideoFeature, EmotionFeature, FaceMeshFeature]:
+    ) -> tuple[VideoFeature, EmotionFeature, FaceMeshFeature, PoseFeature]:
         """
-        Run Layer 1 video extraction plus both vision analyzers in one pass,
-        decoding the video only once and sharing the sampled frames.
+        Run Layer 1 video extraction plus all three vision analyzers in one
+        pass, decoding the video only once and sharing the sampled frames.
+
+        The pose analyzer is the body-movement half of the in-class analysis
+        work (specs/in-class-analysis). It runs on the same frames as the
+        face-mesh analyzer but through its own MediaPipe graph, so a
+        recording where the face is too far away to lock onto still yields
+        full-body metrics -- see `analyzers/pose_analyzer.py` on why the two
+        are separate graphs rather than one holistic one.
         """
         video_feature, frames, timestamps = self._video_extractor.extract_with_frames(video_path)
         frames_with_timestamps = list(zip(frames, timestamps))
         emotion_feature = self._emotion_analyzer.analyze(frames_with_timestamps)
         facemesh_feature = self._facemesh_analyzer.analyze(frames_with_timestamps)
+        pose_feature = self._pose_analyzer.analyze(frames_with_timestamps)
+        # Pose first, Face Mesh only where Pose came up short -- see
+        # `analyzers.pose_analyzer.apply_head_pose_fallback`.
+        pose_feature = apply_head_pose_fallback(pose_feature, facemesh_feature)
+        return video_feature, emotion_feature, facemesh_feature, pose_feature
+
+    def analyze_video_vision(
+        self, video_path: Path
+    ) -> tuple[VideoFeature, EmotionFeature, FaceMeshFeature]:
+        """
+        Run Layer 1 video extraction plus the two face-based vision analyzers.
+
+        Kept as its own entry point (rather than folded into
+        `analyze_video_all`) because `/analyze/video` and the existing
+        evaluation workflow only ever want these three.
+        """
+        video_feature, emotion_feature, facemesh_feature, _pose = self.analyze_video_all(video_path)
         return video_feature, emotion_feature, facemesh_feature
 
     # ------------------------------------------------------------------
@@ -182,6 +210,7 @@ class AIOrchestrator:
         video_feature: VideoFeature | None = None
         emotion_feature: EmotionFeature | None = None
         facemesh_feature: FaceMeshFeature | None = None
+        pose_feature: PoseFeature | None = None
 
         if resume_path is not None:
             resume_feature = await asyncio.to_thread(self.extract_resume, resume_path)
@@ -199,8 +228,8 @@ class AIOrchestrator:
             )
 
         if video_path is not None:
-            video_feature, emotion_feature, facemesh_feature = await asyncio.to_thread(
-                self.analyze_video_vision, video_path
+            video_feature, emotion_feature, facemesh_feature, pose_feature = await asyncio.to_thread(
+                self.analyze_video_all, video_path
             )
             # If no standalone speech file was given, transcribe the video's
             # own audio track so transcript-based scoring still runs.
@@ -225,6 +254,7 @@ class AIOrchestrator:
             transcript=transcript_feature,
             emotion=emotion_feature,
             facemesh=facemesh_feature,
+            pose=pose_feature,
             resume_analysis=resume_analysis,
             slide_analysis=slide_analysis,
         )

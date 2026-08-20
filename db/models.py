@@ -165,6 +165,17 @@ class AnalysisSession(Base):
         nullable=True,
     )
 
+    # Both added now although nothing in this milestone writes them. Storing
+    # only a free-text student name and wiring accounts up later would mean a
+    # migration plus a manual reconciliation pass over thousands of historical
+    # rows; two nullable columns today cost nothing.
+    student_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, nullable=True, doc="Set once a student claims this session into their account."
+    )
+    claim_token: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True, doc="Token behind the no-login student result link."
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -204,6 +215,15 @@ class AnalysisSession(Base):
         back_populates="session", cascade="all, delete-orphan"
     )
     recommendations: Mapped[list["RecommendationORM"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan"
+    )
+    pose_feature: Mapped["PoseFeatureORM | None"] = relationship(
+        back_populates="session", uselist=False, cascade="all, delete-orphan"
+    )
+    presentation_events: Mapped[list["PresentationEventORM"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan"
+    )
+    teacher_notes: Mapped[list["TeacherNoteORM"]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
     )
 
@@ -439,6 +459,9 @@ class FaceMeshFeatureORM(Base):
     blink_rate_per_min: Mapped[float] = mapped_column(Float, default=0.0)
     eye_openness_mean: Mapped[float] = mapped_column(Float, default=0.0)
     eye_contact_ratio: Mapped[float] = mapped_column(Float, default=0.0)
+    # Nullable on purpose: NULL means no face was found, which must stay
+    # distinguishable from a measured 0.0 (head down the whole time).
+    head_up_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
     head_pose_pitch_std: Mapped[float] = mapped_column(Float, default=0.0)
     head_pose_yaw_std: Mapped[float] = mapped_column(Float, default=0.0)
     head_pose_roll_std: Mapped[float] = mapped_column(Float, default=0.0)
@@ -685,6 +708,172 @@ class RecommendationORM(Base):
 
     session: Mapped["AnalysisSession"] = relationship(back_populates="recommendations")
     resource: Mapped["LearningResourceORM"] = relationship(back_populates="recommendations")
+
+
+# ---------------------------------------------------------------------------
+# In-class analysis (specs/in-class-analysis). One recording produces one
+# `PoseFeatureORM`, many `PresentationEventORM` rows (what the machine found),
+# and many `TeacherNoteORM` rows (what the teacher marked).
+#
+# The machine events and the teacher notes are two tables on purpose, and
+# never one table with a `source` column. Both accuracy features (Task 10's
+# threshold calibration and Task 15's quality dashboard) work by comparing one
+# against the other on a shared time axis; keeping them physically apart makes
+# that comparison impossible to get wrong. A single table with a flag works
+# right until somebody forgets the filter, and then the verification data is
+# quietly worthless.
+# ---------------------------------------------------------------------------
+
+
+class PoseFeatureORM(Base):
+    """
+    Mirrors `models.features.PoseFeature` (MediaPipe Pose body movement).
+
+    Each of the seven metrics is stored as a value/measured/reason triple
+    rather than a bare float. A NULL value with a reason means the landmarks
+    were not there -- deliberately distinguishable from a real measurement of
+    zero, which is the whole point of `analyzers/landmark_availability.py`.
+
+    `series_json` holds the per-frame time series `events/detector.py` runs
+    over, so events can be re-detected against new thresholds without
+    re-decoding the video.
+    """
+
+    __tablename__ = "pose_features"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("analysis_sessions.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+
+    profile: Mapped[str] = mapped_column(String(64), nullable=False, default="presentation_class")
+    profile_version: Mapped[str] = mapped_column(String(32), nullable=False, default="0.0.0")
+
+    frames_analyzed: Mapped[int] = mapped_column(Integer, default=0)
+    pose_detected_ratio: Mapped[float] = mapped_column(Float, default=0.0)
+    available_landmark_groups: Mapped[list] = mapped_column(JSON, default=list)
+    landmark_group_availability: Mapped[list] = mapped_column(JSON, default=list)
+    sampling_rate_hz: Mapped[float] = mapped_column(Float, default=0.0)
+    sampling_warning: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    head_up_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    head_up_ratio_measured: Mapped[bool] = mapped_column(Boolean, default=False)
+    head_up_ratio_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    postural_sway: Mapped[float | None] = mapped_column(Float, nullable=True)
+    postural_sway_measured: Mapped[bool] = mapped_column(Boolean, default=False)
+    postural_sway_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    movement_range: Mapped[float | None] = mapped_column(Float, nullable=True)
+    movement_range_measured: Mapped[bool] = mapped_column(Boolean, default=False)
+    movement_range_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    gesture_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
+    gesture_rate_measured: Mapped[bool] = mapped_column(Boolean, default=False)
+    gesture_rate_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    closed_posture_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    closed_posture_ratio_measured: Mapped[bool] = mapped_column(Boolean, default=False)
+    closed_posture_ratio_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    shoulder_tilt: Mapped[float | None] = mapped_column(Float, nullable=True)
+    shoulder_tilt_measured: Mapped[bool] = mapped_column(Boolean, default=False)
+    shoulder_tilt_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    turned_away_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
+    turned_away_ratio_measured: Mapped[bool] = mapped_column(Boolean, default=False)
+    turned_away_ratio_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    series_json: Mapped[list] = mapped_column(JSON, default=list)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    session: Mapped["AnalysisSession"] = relationship(back_populates="pose_feature")
+
+
+class PresentationEventORM(Base):
+    """
+    Mirrors `models.events.PresentationEvent`: one machine-detected moment.
+
+    `rule_version` is stored per row, not per session: after thresholds are
+    recalibrated and the profile's version bumps, historical events stay
+    attributable to the rules that actually produced them.
+    """
+
+    __tablename__ = "presentation_events"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("analysis_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    profile: Mapped[str] = mapped_column(String(64), nullable=False)
+    type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+
+    start_sec: Mapped[float] = mapped_column(Float, nullable=False)
+    duration_sec: Mapped[float] = mapped_column(Float, nullable=False)
+
+    measured_value: Mapped[float] = mapped_column(Float, nullable=False)
+    unit: Mapped[str] = mapped_column(String(32), nullable=False)
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    rule_version: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    session: Mapped["AnalysisSession"] = relationship(back_populates="presentation_events")
+
+
+class NoteVisibilityDB(str, enum.Enum):
+    """Storage-level mirror of `models.notes.NoteVisibility`."""
+
+    PRIVATE = "private"
+    SHARED_WITH_STUDENT = "shared_with_student"
+
+
+class TeacherNoteORM(Base):
+    """
+    Mirrors `models.notes.TeacherNote`: one mark the teacher made by pressing
+    a single key mid-presentation.
+
+    Two invariants this table carries, both load-bearing:
+
+    * **Originals are never updated.** An edit inserts a new row whose
+      `revision_of` points at the original. Only rows with
+      `created_during_recording = TRUE AND revision_of IS NULL` may be used as
+      ground truth, because those are the only ones written before the teacher
+      could see the machine's output.
+    * **`visibility` defaults to `private`.** Sharing a note with the student
+      takes an explicit per-note action; linking a session to a student
+      account never reveals notes on its own.
+    """
+
+    __tablename__ = "teacher_notes"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("analysis_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    mark_sec: Mapped[float] = mapped_column(Float, nullable=False)
+    created_during_recording: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    visibility: Mapped[NoteVisibilityDB] = mapped_column(
+        Enum(NoteVisibilityDB, name="note_visibility", values_callable=lambda obj: [e.value for e in obj]),
+        nullable=False,
+        default=NoteVisibilityDB.PRIVATE,
+    )
+
+    revision_of: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("teacher_notes.id", ondelete="SET NULL"), nullable=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    session: Mapped["AnalysisSession"] = relationship(back_populates="teacher_notes")
+    original: Mapped["TeacherNoteORM | None"] = relationship(remote_side=[id])
 
 
 # ---------------------------------------------------------------------------

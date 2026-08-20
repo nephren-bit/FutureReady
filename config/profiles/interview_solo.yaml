@@ -1,0 +1,62 @@
+# Hồ sơ bối cảnh: luyện phỏng vấn một mình.
+#
+# ĐỢT NÀY CHỈ KHAI BÁO CẤU TRÚC, CHƯA ĐIỀN NGƯỠNG.
+#
+# Ba chỉ số riêng của phỏng vấn (`self_touch_rate`, `torso_lean`,
+# `response_latency`) nằm ngoài phạm vi đợt này nên chưa khai báo ở đây —
+# thêm chúng vào `metrics` là việc của đợt sau, cùng lúc với việc điền ngưỡng.
+#
+# Người phỏng vấn ngồi, camera gần: `movement_range` và `turned_away_ratio`
+# không có nghĩa trong bối cảnh này nên đã bỏ khỏi tập chỉ số, và `postural_sway`
+# sẽ phải định nghĩa lại theo thân trên thay vì theo hông.
+
+profile: interview_solo
+version: "0.0.0"
+description: >-
+  Người dùng ngồi trả lời câu hỏi phỏng vấn trước webcam.
+
+frame_requirements:
+  min_pose_detected_ratio: 0.5
+  min_landmark_visibility: 0.5
+  min_group_frame_ratio: 0.6
+  min_sample_rate_hz: 1.0
+
+metrics:
+  head_up_ratio:
+    unit: "tỷ lệ 0-1"
+    required_landmark_groups: [head, shoulders]
+    params:
+      head_up_margin_ratio: 0.35
+
+  postural_sway:
+    unit: "lần rộng vai"
+    required_landmark_groups: [shoulders, hips]
+    params: {}
+
+  gesture_rate:
+    unit: "lần/phút"
+    required_landmark_groups: [shoulders, hips, upper_body]
+    params:
+      gesture_elevation_ratio: 0.35
+      gesture_lateral_ratio: 0.45
+
+  closed_posture_ratio:
+    unit: "tỷ lệ 0-1"
+    required_landmark_groups: [shoulders, hips, upper_body]
+    params:
+      low_wrist_elevation_ratio: 0.05
+      crossed_wrist_overlap_ratio: 0.10
+
+  shoulder_tilt:
+    unit: "độ"
+    required_landmark_groups: [shoulders]
+    params: {}
+
+# Danh mục sự kiện đã khai báo. Ngưỡng để đợt sau, cùng với nhóm sự kiện riêng
+# của phỏng vấn (E_SELF_TOUCH_BURST, E_LEAN_BACK, E_SLOW_RESPONSE...).
+event_catalog:
+  - E_HEAD_DOWN
+  - E_CLOSED_POSTURE
+  - E_STABLE_SEGMENT
+
+events: {}

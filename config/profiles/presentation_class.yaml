@@ -1,0 +1,216 @@
+# Hồ sơ bối cảnh: thuyết trình tại lớp học, giáo viên bấm ghi.
+#
+# Đây là hồ sơ DUY NHẤT được điền ngưỡng trong đợt này. Hai hồ sơ còn lại
+# (presentation_solo, interview_solo) chỉ khai báo cấu trúc, chưa có ngưỡng.
+#
+# Mọi ngưỡng nằm ở đây, không hard-code trong mã. Đổi một con số trong file
+# này rồi chạy lại là số sự kiện phát hiện được thay đổi tương ứng.
+#
+# Sau mỗi lần hiệu chỉnh ngưỡng (Task 10) phải tăng `version`. Giá trị này
+# được đóng dấu vào từng `PresentationEvent.rule_version`, nên một kết quả cũ
+# luôn truy được về đúng bộ ngưỡng đã sinh ra nó.
+
+profile: presentation_class
+version: "0.1.0"
+description: >-
+  Sinh viên đứng thuyết trình trước lớp, camera đặt phía khán giả, thấy được
+  toàn thân hoặc ít nhất từ hông trở lên.
+
+# ---------------------------------------------------------------------------
+# Yêu cầu tối thiểu về khung hình
+# ---------------------------------------------------------------------------
+# Không đạt các mức này thì chỉ số liên quan trả về `không đo được` kèm lý do,
+# tuyệt đối không trả về 0 (xem analyzers/landmark_availability.py).
+frame_requirements:
+  # Tỷ lệ khung hình phát hiện được người, dưới mức này coi như cả bài không đo được.
+  min_pose_detected_ratio: 0.5
+  # Điểm mốc có `visibility` dưới mức này coi như không nhìn thấy.
+  min_landmark_visibility: 0.5
+  # Một nhóm điểm mốc chỉ được coi là ổn định khi nhìn thấy đủ trong tỷ lệ khung
+  # hình này trở lên.
+  min_group_frame_ratio: 0.6
+  # Tần số lấy mẫu tối thiểu để việc dò sự kiện có nghĩa. Không đạt thì vẫn tính
+  # chỉ số tổng hợp nhưng ghi cảnh báo vào `sampling_warning`.
+  min_sample_rate_hz: 1.0
+
+# ---------------------------------------------------------------------------
+# Tập chỉ số áp dụng
+# ---------------------------------------------------------------------------
+# `required_landmark_groups` là hợp đồng giữa Task 2 và Task 3: thiếu bất kỳ
+# nhóm nào trong danh sách thì chỉ số đó `measured = false`, kèm lý do.
+# `params` là các hằng số hình học của chính phép đo, cũng không hard-code.
+metrics:
+  head_up_ratio:
+    unit: "tỷ lệ 0-1"
+    required_landmark_groups: [head, shoulders]
+    params:
+      # (y_đường_vai - y_mũi) / chiều_rộng_vai. Trên mức này coi là đang ngẩng.
+      head_up_margin_ratio: 0.35
+      # Phương án dự phòng khi Pose không đo được: chỉ dùng head pose của Face
+      # Mesh khi phát hiện được mặt rõ trong ít nhất tỷ lệ khung hình này.
+      facemesh_fallback_min_faces_ratio: 0.6
+      # Vị trí mũi giữa đường mắt và cằm. Càng gần 1 là càng cúi.
+      facemesh_nose_drop_ratio: 0.62
+
+  postural_sway:
+    unit: "lần rộng vai"
+    required_landmark_groups: [shoulders, hips]
+    params: {}
+
+  movement_range:
+    unit: "lần rộng vai"
+    required_landmark_groups: [shoulders, hips]
+    params: {}
+
+  gesture_rate:
+    unit: "lần/phút"
+    required_landmark_groups: [shoulders, hips, upper_body]
+    params:
+      # Cổ tay cao hơn đường hông bao nhiêu lần rộng vai thì tính là ra khỏi thân.
+      gesture_elevation_ratio: 0.35
+      # Hoặc lệch ngang khỏi vai bao nhiêu lần rộng vai.
+      gesture_lateral_ratio: 0.45
+
+  closed_posture_ratio:
+    unit: "tỷ lệ 0-1"
+    required_landmark_groups: [shoulders, hips, upper_body]
+    params:
+      # Cổ tay thấp hơn mức này (lần rộng vai, tính từ đường hông) là tay để thấp.
+      low_wrist_elevation_ratio: 0.05
+      # Hai cổ tay vượt qua nhau quá mức này (lần rộng vai) là khoanh tay.
+      crossed_wrist_overlap_ratio: 0.10
+
+  shoulder_tilt:
+    unit: "độ"
+    required_landmark_groups: [shoulders]
+    params: {}
+
+  turned_away_ratio:
+    unit: "tỷ lệ 0-1"
+    required_landmark_groups: [shoulders]
+    params:
+      # Chiều rộng vai chiếu lên ảnh còn dưới bao nhiêu lần mức tham chiếu
+      # (phân vị 90 của cả bài) thì coi là đã xoay người.
+      turned_width_ratio: 0.62
+
+# ---------------------------------------------------------------------------
+# Danh mục sự kiện
+# ---------------------------------------------------------------------------
+# Khai báo trước những loại sự kiện hồ sơ này được phép sinh ra. `events` bên
+# dưới chỉ được chứa các mã nằm trong danh mục này.
+event_catalog:
+  - E_HEAD_DOWN
+  - E_STATIC
+  - E_PACING
+  - E_TURNED_AWAY
+  - E_CLOSED_POSTURE
+  - E_STABLE_SEGMENT
+
+# ---------------------------------------------------------------------------
+# Bộ ngưỡng
+# ---------------------------------------------------------------------------
+# Chỉnh theo hướng thà bỏ sót còn hơn báo nhầm: thời lượng tối thiểu để dài,
+# ngưỡng để chặt.
+#
+# `signal` là tín hiệu đo từng khung hình do pose_analyzer sinh ra
+# (xem models/features.PoseFrameSample.signals).
+# `comparison`: below | at_most | above | at_least
+# `report.value`: duration | mean:<signal> | max:<signal> | min:<signal>
+events:
+  E_HEAD_DOWN:
+    requires_metrics: [head_up_ratio]
+    conditions:
+      - signal: head_up
+        comparison: below
+        threshold: 0.5
+    min_duration_sec: 4.0
+    merge_gap_sec: 2.0
+    report:
+      value: duration
+      unit: "giây"
+    label_template: "Cúi mặt liên tục {duration} giây"
+
+  E_STATIC:
+    requires_metrics: [postural_sway, movement_range]
+    conditions:
+      - signal: motion_rate
+        comparison: at_most
+        threshold: 0.04
+    min_duration_sec: 25.0
+    merge_gap_sec: 2.0
+    report:
+      value: mean:motion_rate
+      unit: "lần rộng vai/giây"
+    label_template: "Không dịch chuyển trong {duration} giây (dịch chuyển trung bình {value} lần rộng vai mỗi giây)"
+
+  E_PACING:
+    requires_metrics: [movement_range]
+    conditions:
+      - signal: horizontal_rate
+        comparison: at_least
+        threshold: 0.55
+    min_duration_sec: 8.0
+    merge_gap_sec: 2.0
+    report:
+      value: mean:horizontal_rate
+      unit: "lần rộng vai/giây"
+    label_template: "Di chuyển ngang trung bình {value} lần rộng vai mỗi giây, kéo dài {duration} giây"
+
+  E_TURNED_AWAY:
+    requires_metrics: [turned_away_ratio]
+    conditions:
+      - signal: turned_away
+        comparison: at_least
+        threshold: 0.5
+    min_duration_sec: 5.0
+    merge_gap_sec: 2.0
+    report:
+      value: min:shoulder_width_ratio
+      unit: "lần mức tham chiếu"
+    label_template: "Quay người khỏi hướng khán giả {duration} giây (chiều rộng vai còn {value} lần mức tham chiếu)"
+
+  E_CLOSED_POSTURE:
+    requires_metrics: [closed_posture_ratio]
+    conditions:
+      - signal: closed_posture
+        comparison: at_least
+        threshold: 0.5
+    min_duration_sec: 12.0
+    merge_gap_sec: 2.0
+    report:
+      value: duration
+      unit: "giây"
+    label_template: "Khoanh tay hoặc tay để thấp liên tục {duration} giây"
+
+  # Nhóm tích cực. Đây là VẮNG MẶT điểm yếu, không phải phát hiện điểm mạnh —
+  # không đặt tên là "điểm mạnh" ở bất kỳ đâu trong giao diện lẫn tài liệu.
+  E_STABLE_SEGMENT:
+    requires_metrics:
+      - head_up_ratio
+      - postural_sway
+      - movement_range
+      - closed_posture_ratio
+      - shoulder_tilt
+      - turned_away_ratio
+    conditions:
+      - signal: head_up
+        comparison: at_least
+        threshold: 0.5
+      - signal: turned_away
+        comparison: below
+        threshold: 0.5
+      - signal: closed_posture
+        comparison: below
+        threshold: 0.5
+      - signal: motion_rate
+        comparison: at_most
+        threshold: 0.45
+      - signal: shoulder_tilt_deg
+        comparison: at_most
+        threshold: 9.0
+    min_duration_sec: 20.0
+    merge_gap_sec: 2.0
+    report:
+      value: duration
+      unit: "giây"
+    label_template: "Đoạn {duration} giây mọi chỉ số nằm trong dải tốt"

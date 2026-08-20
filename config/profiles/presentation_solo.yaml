@@ -1,0 +1,79 @@
+# Hồ sơ bối cảnh: cá nhân tự luyện thuyết trình trước webcam.
+#
+# ĐỢT NÀY CHỈ KHAI BÁO CẤU TRÚC, CHƯA ĐIỀN NGƯỠNG.
+#
+# `events` để rỗng là có chủ ý, không phải thiếu sót: chưa hiệu chỉnh ngưỡng
+# cho bối cảnh ngồi trước laptop thì thà không sinh sự kiện nào còn hơn sinh
+# sự kiện sai. Bộ dò sự kiện chạy với hồ sơ này trả về danh sách rỗng và ghi
+# một dòng log, không ném lỗi.
+#
+# Khác biệt đã biết so với presentation_class, sẽ xử lý ở đợt sau:
+# người dùng thường ngồi và khung hình cắt ngang ngực, nên nhóm `hips` thường
+# không nhìn thấy — các chỉ số dựa trên hông sẽ trả về `không đo được`, đúng
+# như thiết kế, chứ không trả về 0.
+
+profile: presentation_solo
+version: "0.0.0"
+description: >-
+  Người dùng tự ghi trước webcam. Camera gần, khung hình thường cắt ngang ngực.
+
+frame_requirements:
+  min_pose_detected_ratio: 0.5
+  min_landmark_visibility: 0.5
+  min_group_frame_ratio: 0.6
+  min_sample_rate_hz: 1.0
+
+# Tập chỉ số áp dụng. Giữ nguyên `required_landmark_groups` như hồ sơ lớp học:
+# đây là ràng buộc hình học, không phải ngưỡng, nên không cần chờ hiệu chỉnh.
+metrics:
+  head_up_ratio:
+    unit: "tỷ lệ 0-1"
+    required_landmark_groups: [head, shoulders]
+    params:
+      head_up_margin_ratio: 0.35
+
+  postural_sway:
+    unit: "lần rộng vai"
+    required_landmark_groups: [shoulders, hips]
+    params: {}
+
+  movement_range:
+    unit: "lần rộng vai"
+    required_landmark_groups: [shoulders, hips]
+    params: {}
+
+  gesture_rate:
+    unit: "lần/phút"
+    required_landmark_groups: [shoulders, hips, upper_body]
+    params:
+      gesture_elevation_ratio: 0.35
+      gesture_lateral_ratio: 0.45
+
+  closed_posture_ratio:
+    unit: "tỷ lệ 0-1"
+    required_landmark_groups: [shoulders, hips, upper_body]
+    params:
+      low_wrist_elevation_ratio: 0.05
+      crossed_wrist_overlap_ratio: 0.10
+
+  shoulder_tilt:
+    unit: "độ"
+    required_landmark_groups: [shoulders]
+    params: {}
+
+  turned_away_ratio:
+    unit: "tỷ lệ 0-1"
+    required_landmark_groups: [shoulders]
+    params:
+      turned_width_ratio: 0.62
+
+# Danh mục sự kiện đã khai báo. Ngưỡng để đợt sau.
+event_catalog:
+  - E_HEAD_DOWN
+  - E_STATIC
+  - E_PACING
+  - E_TURNED_AWAY
+  - E_CLOSED_POSTURE
+  - E_STABLE_SEGMENT
+
+events: {}
