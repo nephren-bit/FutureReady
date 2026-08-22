@@ -368,7 +368,8 @@ FutureReady/
 ├── data/
 │   └── learning_resources/      #   VietFuture.xlsx, Danh_Sach_TED_Talk_Ky_Nang.xlsx (Recommendation Engine seed source)
 ├── scripts/
-│   └── seed_learning_resources.py  # Idempotent seed script for the learning_resources catalog
+│   ├── seed_learning_resources.py  # Idempotent seed script for the learning_resources catalog
+│   └── assign_orphan_sessions.py   # Gives pre-accounts sessions (user_id IS NULL) an owner
 ├── db/                          # Persistence layer (PostgreSQL via SQLAlchemy 2.0)
 │   ├── base.py                  #   Shared DeclarativeBase
 │   ├── models.py                #   AnalysisSession, PreliminaryEvaluationORM, LearningResourceORM,
@@ -638,7 +639,7 @@ multi-second Whisper/MediaPipe/Gemini call.
 | Endpoint | Description |
 |---|---|
 | `POST /sessions` | Create a session. Body: `{"mode": "presentation" \| "interview", "language": "vi"}` |
-| `GET /sessions` | List every session, most recently created first (used by the frontend Dashboard) |
+| `GET /sessions` | List **your own** sessions, most recently created first (used by the frontend Dashboard) |
 | `POST /sessions/{id}/slide` | Upload slides (`.pptx`, Presentation mode only) |
 | `POST /sessions/{id}/resume` | Upload a resume (`.pdf`, Interview mode only) |
 | `POST /sessions/{id}/video` | Upload the video (`.mp4/.mov/.m4v`, either mode, once `state == waiting_for_video`) |
@@ -648,6 +649,38 @@ multi-second Whisper/MediaPipe/Gemini call.
 | `GET /sessions/{id}/recommendations` | Ranked learning-resource picks — only available once `state == completed` |
 | `POST /sessions/{id}/retry` | Retry a `failed` session from the exact sub-stage it failed at |
 | `DELETE /sessions/{id}` | Delete the session and every row derived from it |
+
+#### Ownership
+
+Every route in the table requires a token, and a session belongs to the
+account that created it (`analysis_sessions.user_id`).
+
+* `GET /sessions` is scoped by a `WHERE user_id = :me` clause inside
+  `EvaluationWorkflowManager.list_sessions`, not filtered after fetching. A
+  newly registered account therefore owns nothing, matches nothing, and lands
+  on an empty dashboard — including a lecturer's or an administrator's, since
+  that endpoint answers "what is on my dashboard?", not "what may I open?".
+* The per-session routes re-check a single row, because knowing a UUID is not
+  authorization — ids travel through URLs, logs, and browser history. Reads go
+  through `assert_can_access_session`, writes through
+  `assert_can_modify_session` (both in `routers/dependencies.py`).
+* The two checks differ on purpose. A lecturer may **read** another learner's
+  session (permission matrix row 9) but may not upload to, retry, or delete
+  it; only the owner and administrators can. Wrong account → `403`, no token →
+  `401`.
+
+Sessions recorded before accounts existed have `user_id = NULL`, so they
+belong to nobody and appear for nobody. `scripts/assign_orphan_sessions.py`
+hands them to real accounts:
+
+```bash
+python -m scripts.assign_orphan_sessions            # dry run: prints the plan
+python -m scripts.assign_orphan_sessions --confirm  # round-robin across active learners
+python -m scripts.assign_orphan_sessions --confirm --to a@x.edu.vn,b@x.edu.vn
+```
+
+It only ever writes `user_id`; no session, feature, score, or report row is
+created, changed, or deleted.
 
 ### State machine
 
@@ -907,6 +940,8 @@ use an in-memory SQLite database instead).
 | `409 Conflict` on a session endpoint | Illegal state transition (e.g. uploading video before the slide's preliminary evaluation finishes) | Check `GET /sessions/{id}` → `legal_next_events` before the next upload |
 | `409 Conflict` on `GET /sessions/{id}/preliminary/{stage}` | That material's preliminary evaluation hasn't completed yet | Poll `GET /sessions/{id}` until state moves past `{stage}_evaluated`/`waiting_for_video` |
 | `GET /sessions/{id}/recommendations` returns an empty list | `learning_resources` catalog hasn't been seeded | Run `python -m scripts.seed_learning_resources` |
+| Dashboard is empty although the database has sessions | Those rows predate accounts (`user_id IS NULL`), so they belong to no account | Run `python -m scripts.assign_orphan_sessions --confirm` |
+| `403` with *"Bạn chỉ xem được phiên của chính mình"* | The session belongs to another account | Sign in as its owner; a lecturer may read but not modify it, an administrator may do both |
 | `409 Conflict` on `GET /practice/{id}/evaluation` | The practice session hasn't finished (`state` isn't `completed` yet) | Send `{"type": "end_session"}` over the socket and wait for `final_evaluation`, or poll `GET /practice/{id}` |
 | `409 Conflict` on `POST /practice/{id}/slide`\|`/resume` | Wrong material for the session's mode, or streaming has already started | Attach slides only to a `presentation`-mode session (resume only to `interview`), and only while `state == connecting` |
 | `413 Request Entity Too Large` | File exceeds `MAX_FILE_SIZE_MB` / `MAX_VIDEO_SIZE_MB` | Raise the limit in `.env` or compress the file |

@@ -146,19 +146,50 @@ class EvaluationWorkflowManager:
             raise SessionNotFoundError(f"No session with id={session_id}")
         return session
 
-    def list_sessions(self, db: DBSession) -> list[AnalysisSession]:
+    def list_sessions(self, db: DBSession, owner_id: uuid.UUID) -> list[AnalysisSession]:
+        """
+        Every session belonging to `owner_id`, most recently created first.
+
+        `owner_id` is a required argument and applied as a WHERE clause rather
+        than as a filter over a full fetch, so there is no way to ask this
+        method for "all sessions" and no caller who can forget to narrow the
+        result afterwards. That is what makes a newly registered account see
+        an empty dashboard: it owns nothing, so it matches nothing.
+
+        Sessions with a NULL `user_id` belong to nobody and are consequently
+        listed for nobody -- see `scripts/assign_orphan_sessions.py`, which
+        hands the pre-accounts rows to real owners.
+        """
         return (
             db.query(AnalysisSession)
+            .filter(AnalysisSession.user_id == owner_id)
             .order_by(AnalysisSession.created_at.desc())
             .all()
         )
 
-    def create_session(self, db: DBSession, mode: EvaluationMode, language: str = "vi") -> AnalysisSession:
-        session = AnalysisSession(mode=mode, state=SessionState.EMPTY, language=language)
+    def create_session(
+        self,
+        db: DBSession,
+        mode: EvaluationMode,
+        language: str = "vi",
+        owner_id: uuid.UUID | None = None,
+    ) -> AnalysisSession:
+        """
+        Start a new, empty session.
+
+        `owner_id` is what binds the session to an account, and every HTTP
+        caller supplies it -- `POST /sessions` requires a token and passes the
+        authenticated user's id. It stays optional here because the workflow
+        layer is also driven directly by tests and by scripts, where there is
+        no request and no account to attribute the run to.
+        """
+        session = AnalysisSession(
+            mode=mode, state=SessionState.EMPTY, language=language, user_id=owner_id
+        )
         db.add(session)
         db.commit()
         db.refresh(session)
-        logger.info("Created session %s (mode=%s)", session.id, mode.value)
+        logger.info("Created session %s (mode=%s, owner=%s)", session.id, mode.value, owner_id)
         return session
 
     def delete_session(self, db: DBSession, session_id: uuid.UUID) -> None:

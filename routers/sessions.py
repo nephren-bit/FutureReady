@@ -29,6 +29,19 @@ learning resources targeted at the session's weakest areas, visible via
 Background jobs open their own DB session (`db.session.SessionLocal`)
 rather than reusing the request-scoped one from `Depends(get_db)`, since
 the request's session is torn down once the response is sent.
+
+Ownership
+---------
+Every route here requires a signed-in account, and a session belongs to the
+account that created it. `GET /sessions` is scoped by a WHERE clause on
+`user_id` rather than filtered after the fact, so a new account starts with
+an empty dashboard and no request can widen the query. The per-session
+routes re-derive the same answer for a single row through
+`assert_can_access_session` (read) and `assert_can_modify_session` (write),
+because knowing a session's UUID is not authorization -- ids travel through
+logs, URLs, and browser history. Reading and writing are split deliberately:
+a lecturer may open another learner's report (permission matrix row 9) but
+may not upload to, retry, or delete it.
 """
 
 from __future__ import annotations
@@ -40,7 +53,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Up
 from sqlalchemy.orm import Session as DBSession
 
 from config import settings
-from db.models import EvaluationStage
+from db.models import AnalysisSession, EvaluationStage, UserORM
 from db.session import SessionLocal, get_db
 from models.responses import ErrorResponse
 from models.session_models import (
@@ -49,6 +62,11 @@ from models.session_models import (
     SessionCreateRequest,
     SessionReportResponse,
     SessionResponse,
+)
+from routers.dependencies import (
+    CurrentUser,
+    assert_can_access_session,
+    assert_can_modify_session,
 )
 from services.session_state_machine import InvalidTransitionError
 from services.workflow_manager import (
@@ -65,6 +83,8 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/sessions", tags=["Sessions"])
 
 _ERROR_RESPONSES = {
+    401: {"model": ErrorResponse},
+    403: {"model": ErrorResponse},
     404: {"model": ErrorResponse},
     409: {"model": ErrorResponse},
     400: {"model": ErrorResponse},
@@ -78,6 +98,32 @@ def _not_found(exc: SessionNotFoundError) -> HTTPException:
 
 def _conflict(exc: InvalidTransitionError) -> HTTPException:
     return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+
+def _load_readable(db: DBSession, session_id: uuid.UUID, user: UserORM) -> AnalysisSession:
+    """Fetch a session the caller is allowed to read, or raise 404/403."""
+    try:
+        session = workflow_manager.get_session(db, session_id)
+    except SessionNotFoundError as exc:
+        raise _not_found(exc) from exc
+    assert_can_access_session(session, user)
+    return session
+
+
+def _load_writable(db: DBSession, session_id: uuid.UUID, user: UserORM) -> AnalysisSession:
+    """
+    Fetch a session the caller is allowed to change, or raise 404/403.
+
+    Upload routes call this *before* the uploaded file is written to disk.
+    Saving first and checking afterwards would let anyone holding a session id
+    they may not touch still spend the server's disk on a rejected request.
+    """
+    try:
+        session = workflow_manager.get_session(db, session_id)
+    except SessionNotFoundError as exc:
+        raise _not_found(exc) from exc
+    assert_can_modify_session(session, user)
+    return session
 
 
 # ---------------------------------------------------------------------------
@@ -139,19 +185,31 @@ async def _background_retry(session_id: uuid.UUID) -> None:
     summary="Create a new evaluation session (Presentation or Interview).",
 )
 async def create_session(
-    payload: SessionCreateRequest, db: DBSession = Depends(get_db)
+    payload: SessionCreateRequest, user: CurrentUser, db: DBSession = Depends(get_db)
 ) -> SessionResponse:
-    session = workflow_manager.create_session(db, payload.mode, payload.language)
+    session = workflow_manager.create_session(
+        db, payload.mode, payload.language, owner_id=user.id
+    )
     return SessionResponse.from_orm_session(session)
 
 
 @router.get(
     "",
     response_model=list[SessionResponse],
-    summary="List all sessions, most recently created first.",
+    responses={401: {"model": ErrorResponse}, 403: {"model": ErrorResponse}},
+    summary="List the signed-in account's own sessions, most recently created first.",
 )
-async def list_sessions(db: DBSession = Depends(get_db)) -> list[SessionResponse]:
-    sessions = workflow_manager.list_sessions(db)
+async def list_sessions(user: CurrentUser, db: DBSession = Depends(get_db)) -> list[SessionResponse]:
+    """
+    Only the caller's own sessions -- for every role, administrators included.
+
+    This endpoint answers "what is on my dashboard?", which is a different
+    question from "whose work am I allowed to open?". A lecturer entitled to
+    read a learner's report (matrix row 9) still reaches it by id through
+    `GET /sessions/{id}`; pouring every learner's history into every
+    lecturer's dashboard would answer a question nobody asked.
+    """
+    sessions = workflow_manager.list_sessions(db, user.id)
     return [SessionResponse.from_orm_session(session) for session in sessions]
 
 
@@ -164,9 +222,12 @@ async def list_sessions(db: DBSession = Depends(get_db)) -> list[SessionResponse
 async def upload_slide(
     session_id: uuid.UUID,
     background_tasks: BackgroundTasks,
+    user: CurrentUser,
     file: UploadFile = File(..., description="Presentation slides (.pptx)."),
     db: DBSession = Depends(get_db),
 ) -> SessionResponse:
+    _load_writable(db, session_id, user)
+
     extension = validate_extension(file, settings.ALLOWED_PPTX_EXTENSIONS)
     saved_path: Path = await save_upload_file(file, extension)
 
@@ -190,9 +251,12 @@ async def upload_slide(
 async def upload_resume(
     session_id: uuid.UUID,
     background_tasks: BackgroundTasks,
+    user: CurrentUser,
     file: UploadFile = File(..., description="Resume/CV (.pdf)."),
     db: DBSession = Depends(get_db),
 ) -> SessionResponse:
+    _load_writable(db, session_id, user)
+
     extension = validate_extension(file, settings.ALLOWED_PDF_EXTENSIONS)
     saved_path: Path = await save_upload_file(file, extension)
 
@@ -221,9 +285,12 @@ async def upload_resume(
 async def upload_video(
     session_id: uuid.UUID,
     background_tasks: BackgroundTasks,
+    user: CurrentUser,
     file: UploadFile = File(..., description="Presentation or interview video (.mp4/.mov/.m4v)."),
     db: DBSession = Depends(get_db),
 ) -> SessionResponse:
+    _load_writable(db, session_id, user)
+
     extension = validate_extension(file, settings.ALLOWED_VIDEO_EXTENSIONS)
     saved_path: Path = await save_upload_file(file, extension, max_size_bytes=settings.MAX_VIDEO_SIZE_BYTES)
 
@@ -245,12 +312,12 @@ async def upload_video(
     summary="Retry a FAILED session from the exact stage it failed at (runs in the background).",
 )
 async def retry_session(
-    session_id: uuid.UUID, background_tasks: BackgroundTasks, db: DBSession = Depends(get_db)
+    session_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    user: CurrentUser,
+    db: DBSession = Depends(get_db),
 ) -> SessionResponse:
-    try:
-        session = workflow_manager.get_session(db, session_id)
-    except SessionNotFoundError as exc:
-        raise _not_found(exc) from exc
+    session = _load_writable(db, session_id, user)
     if session.state.value != "failed":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -267,11 +334,10 @@ async def retry_session(
     responses=_ERROR_RESPONSES,
     summary="Get a session's current state and progress. Poll this after any upload.",
 )
-async def get_session(session_id: uuid.UUID, db: DBSession = Depends(get_db)) -> SessionResponse:
-    try:
-        session = workflow_manager.get_session(db, session_id)
-    except SessionNotFoundError as exc:
-        raise _not_found(exc) from exc
+async def get_session(
+    session_id: uuid.UUID, user: CurrentUser, db: DBSession = Depends(get_db)
+) -> SessionResponse:
+    session = _load_readable(db, session_id, user)
     return SessionResponse.from_orm_session(session)
 
 
@@ -281,9 +347,11 @@ async def get_session(session_id: uuid.UUID, db: DBSession = Depends(get_db)) ->
     responses=_ERROR_RESPONSES,
     summary="Get the final evaluation report. Only available once state == COMPLETED.",
 )
-async def get_report(session_id: uuid.UUID, db: DBSession = Depends(get_db)) -> SessionReportResponse:
+async def get_report(
+    session_id: uuid.UUID, user: CurrentUser, db: DBSession = Depends(get_db)
+) -> SessionReportResponse:
+    session = _load_readable(db, session_id, user)
     try:
-        session = workflow_manager.get_session(db, session_id)
         report = workflow_manager.get_report(db, session_id)
     except SessionNotFoundError as exc:
         raise _not_found(exc) from exc
@@ -344,8 +412,12 @@ async def get_report(session_id: uuid.UUID, db: DBSession = Depends(get_db)) -> 
     ),
 )
 async def get_preliminary_evaluation(
-    session_id: uuid.UUID, stage: EvaluationStage, db: DBSession = Depends(get_db)
+    session_id: uuid.UUID,
+    stage: EvaluationStage,
+    user: CurrentUser,
+    db: DBSession = Depends(get_db),
 ) -> PreliminaryEvaluationResponse:
+    _load_readable(db, session_id, user)
     try:
         row = workflow_manager.get_preliminary_evaluation(db, session_id, stage)
     except SessionNotFoundError as exc:
@@ -365,11 +437,10 @@ async def get_preliminary_evaluation(
         "(recommendations run as the RECOMMENDING stage, right after REASONING)."
     ),
 )
-async def get_recommendations(session_id: uuid.UUID, db: DBSession = Depends(get_db)) -> RecommendationListResponse:
-    try:
-        session = workflow_manager.get_session(db, session_id)
-    except SessionNotFoundError as exc:
-        raise _not_found(exc) from exc
+async def get_recommendations(
+    session_id: uuid.UUID, user: CurrentUser, db: DBSession = Depends(get_db)
+) -> RecommendationListResponse:
+    session = _load_readable(db, session_id, user)
     if session.state.value != "completed":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -384,9 +455,16 @@ async def get_recommendations(session_id: uuid.UUID, db: DBSession = Depends(get
     status_code=status.HTTP_204_NO_CONTENT,
     response_model=None,
     responses=_ERROR_RESPONSES,
-    summary="Delete a session and every feature/score/report row derived from it.",
+    summary=(
+        "Delete one of your own sessions and every feature/score/report row "
+        "derived from it. A lecturer may read another learner's session but not "
+        "delete it; an administrator may delete any."
+    ),
 )
-async def delete_session(session_id: uuid.UUID, db: DBSession = Depends(get_db)) -> None:
+async def delete_session(
+    session_id: uuid.UUID, user: CurrentUser, db: DBSession = Depends(get_db)
+) -> None:
+    _load_writable(db, session_id, user)
     try:
         workflow_manager.delete_session(db, session_id)
     except SessionNotFoundError as exc:

@@ -185,3 +185,37 @@ def assert_can_access_session(session: AnalysisSession, user: UserORM) -> None:
         session.user_id,
     )
     raise _forbidden("Bạn chỉ xem được phiên của chính mình.")
+
+
+def assert_can_modify_session(session: AnalysisSession, user: UserORM) -> None:
+    """
+    The write-side counterpart to `assert_can_access_session`.
+
+    Uploading to, retrying, or deleting a session changes or destroys it, so
+    the lecturer exemption above deliberately does **not** apply: matrix row 9
+    grants a lecturer the right to *view* another learner's work, never to
+    edit or delete it. Owner or administrator only.
+
+    A session with no owner therefore reaches administrators alone. That is
+    the stricter half of the split with `assert_can_access_session`, which
+    keeps unowned history *readable* by everyone: letting anyone read a
+    pre-accounts session costs nothing, while letting anyone delete one loses
+    it for good. Since `create_session` now always stamps an owner, the only
+    rows this can concern are historical ones — and
+    `scripts/assign_orphan_sessions.py` gives those owners.
+
+    Raises:
+        HTTPException: 403 when the caller neither owns the session nor
+            administrates the system.
+    """
+    if session.user_id is not None and session.user_id == user.id:
+        return
+    if user.is_admin:
+        return
+    logger.warning(
+        "User %s was refused write access to session %s owned by %s.",
+        user.id,
+        session.id,
+        session.user_id,
+    )
+    raise _forbidden("Bạn chỉ thay đổi được phiên của chính mình.")

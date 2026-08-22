@@ -9,19 +9,29 @@ the actual AI analysis runs as a `BackgroundTasks` job, so tests poll
 `GET /sessions/{id}` afterward rather than asserting on the immediate
 upload response body — this mirrors how a real frontend is expected to
 observe progress.
+
+Every route under /sessions requires a token, so the `client` fixture
+registers an account and signs in as it for the whole test. `TestOwnership`
+at the bottom of this file is where the account boundary itself is tested:
+that a second account sees none of the first one's work, cannot open it by
+id, and cannot delete it.
 """
 
 from __future__ import annotations
 
 import time
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, pool
 from sqlalchemy.orm import sessionmaker
 
+import app as app_module
+import db.models as dbm
 from db.base import Base
 from db.session import get_db
+from utils.security import create_access_token, hash_password
 from models.features import (
     EmotionFeature,
     FaceMeshFeature,
@@ -112,9 +122,41 @@ def client(monkeypatch, sample_slide_feature, stub_reasoning_engine):
     stub_reasoning_engine.generate_structured = _fake_generate_structured
 
     with TestClient(app_module.app) as test_client:
+        # Sign in for the whole test. Set as a default header rather than
+        # passed per call so a route added later is covered by default; a test
+        # that wants a *different* account passes `headers=` explicitly.
+        test_client.headers["Authorization"] = f"Bearer {_register(test_client, 'owner@truong.edu.vn')}"
         yield test_client
 
     app_module.app.dependency_overrides.clear()
+
+
+def _register(client: TestClient, email: str, password: str = "matkhau123") -> str:
+    """Create an account through the public route and return its bearer token."""
+    resp = client.post("/auth/register", json={"email": email, "password": password})
+    assert resp.status_code == 201, resp.text
+    return resp.json()["access_token"]
+
+
+def _auth(token: str) -> dict[str, str]:
+    """Authorization header for a token."""
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _complete_a_session(client: TestClient) -> str:
+    """Run one presentation session through to COMPLETED and return its id."""
+    session_id = client.post("/sessions", json={"mode": "presentation", "language": "vi"}).json()["id"]
+    client.post(
+        f"/sessions/{session_id}/slide",
+        files={"file": ("deck.pptx", b"fake-pptx-bytes", "application/vnd.openxmlformats-officedocument.presentationml.presentation")},
+    )
+    _poll_until_state(client, session_id, {"waiting_for_video", "failed"})
+    client.post(
+        f"/sessions/{session_id}/video",
+        files={"file": ("talk.mp4", b"fake-mp4-bytes", "video/mp4")},
+    )
+    _poll_until_state(client, session_id, {"completed", "failed"})
+    return session_id
 
 
 def _poll_until_state(client: TestClient, session_id: str, target_states: set[str], timeout_sec: float = 5.0) -> str:
@@ -307,3 +349,156 @@ class TestRecommendationsEndpoint:
     def test_recommendations_unknown_session_is_404(self, client: TestClient) -> None:
         resp = client.get("/sessions/00000000-0000-0000-0000-000000000000/recommendations")
         assert resp.status_code == 404
+
+
+class TestOwnership:
+    """
+    A session belongs to the account that created it.
+
+    These are the tests that would fail if someone dropped the WHERE clause in
+    `list_sessions` or the `assert_can_*_session` call in a route -- the kind
+    of regression that leaves every endpoint returning 200 and every existing
+    test green while quietly showing one account another account's work.
+    """
+
+    def test_created_session_is_stamped_with_its_creator(self, client: TestClient) -> None:
+        me = client.get("/auth/me").json()
+        session_id = client.post("/sessions", json={"mode": "presentation", "language": "vi"}).json()["id"]
+
+        db = next(app_module.app.dependency_overrides[get_db]())
+        try:
+            row = db.get(dbm.AnalysisSession, uuid.UUID(session_id))
+            assert str(row.user_id) == me["id"]
+        finally:
+            db.close()
+
+    def test_a_new_account_sees_none_of_an_existing_accounts_sessions(
+        self, client: TestClient
+    ) -> None:
+        """The headline guarantee: registering does not inherit anyone's history."""
+        _complete_a_session(client)
+        assert len(client.get("/sessions").json()) == 1
+
+        newcomer = _register(client, "newcomer@truong.edu.vn")
+        assert client.get("/sessions", headers=_auth(newcomer)).json() == []
+
+    def test_each_account_lists_only_its_own_sessions(self, client: TestClient) -> None:
+        mine = client.post("/sessions", json={"mode": "presentation", "language": "vi"}).json()["id"]
+
+        other = _register(client, "other@truong.edu.vn")
+        theirs = client.post(
+            "/sessions", json={"mode": "interview", "language": "vi"}, headers=_auth(other)
+        ).json()["id"]
+
+        assert [s["id"] for s in client.get("/sessions").json()] == [mine]
+        assert [s["id"] for s in client.get("/sessions", headers=_auth(other)).json()] == [theirs]
+
+    def test_another_account_cannot_read_a_session_it_does_not_own(
+        self, client: TestClient
+    ) -> None:
+        """Knowing the id is not authorization -- ids leak through URLs and logs."""
+        session_id = _complete_a_session(client)
+        stranger = _auth(_register(client, "stranger@truong.edu.vn"))
+
+        for path in (
+            f"/sessions/{session_id}",
+            f"/sessions/{session_id}/report",
+            f"/sessions/{session_id}/recommendations",
+            f"/sessions/{session_id}/preliminary/slide",
+        ):
+            assert client.get(path, headers=stranger).status_code == 403, path
+
+    def test_another_account_cannot_delete_or_upload_to_a_session_it_does_not_own(
+        self, client: TestClient
+    ) -> None:
+        session_id = client.post("/sessions", json={"mode": "presentation", "language": "vi"}).json()["id"]
+        stranger = _auth(_register(client, "vandal@truong.edu.vn"))
+
+        assert client.delete(f"/sessions/{session_id}", headers=stranger).status_code == 403
+        upload = client.post(
+            f"/sessions/{session_id}/slide",
+            files={"file": ("deck.pptx", b"fake-pptx-bytes", "application/octet-stream")},
+            headers=stranger,
+        )
+        assert upload.status_code == 403
+        assert client.post(f"/sessions/{session_id}/retry", headers=stranger).status_code == 403
+
+        # And the session is still there, untouched, for its owner.
+        assert client.get(f"/sessions/{session_id}").status_code == 200
+
+    def test_a_lecturer_may_read_another_learners_session_but_not_delete_it(
+        self, client: TestClient
+    ) -> None:
+        """
+        Permission matrix row 9 grants viewing, not editing. This is the split
+        between `assert_can_access_session` and `assert_can_modify_session`.
+        """
+        session_id = _complete_a_session(client)
+
+        lecturer = _auth(_register(client, "giangvien@truong.edu.vn"))
+        assert client.patch("/auth/me/role", json={"role": "lecturer"}, headers=lecturer).status_code == 200
+
+        assert client.get(f"/sessions/{session_id}", headers=lecturer).status_code == 200
+        assert client.get(f"/sessions/{session_id}/report", headers=lecturer).status_code == 200
+        assert client.delete(f"/sessions/{session_id}", headers=lecturer).status_code == 403
+
+    def test_a_lecturers_dashboard_still_shows_only_their_own_sessions(
+        self, client: TestClient
+    ) -> None:
+        """Being allowed to open a learner's report does not put it on your dashboard."""
+        _complete_a_session(client)
+
+        lecturer = _auth(_register(client, "giangvien2@truong.edu.vn"))
+        client.patch("/auth/me/role", json={"role": "lecturer"}, headers=lecturer)
+        assert client.get("/sessions", headers=lecturer).json() == []
+
+    def test_an_administrator_may_delete_any_session(self, client: TestClient) -> None:
+        session_id = client.post("/sessions", json={"mode": "presentation", "language": "vi"}).json()["id"]
+
+        db = next(app_module.app.dependency_overrides[get_db]())
+        try:
+            admin = dbm.UserORM(
+                email="quantri@truong.edu.vn",
+                password_hash=hash_password("matkhau123"),
+                full_name="Quan tri",
+                role=dbm.UserRole.LECTURER,
+                is_admin=True,
+            )
+            db.add(admin)
+            db.commit()
+            token = create_access_token(admin.id, role=admin.role.value, is_admin=True)
+        finally:
+            db.close()
+
+        assert client.delete(f"/sessions/{session_id}", headers=_auth(token)).status_code == 204
+
+    def test_every_session_route_requires_a_token(self, client: TestClient) -> None:
+        """NFR-08: no token, no business route -- 401, not an empty 200."""
+        session_id = client.post("/sessions", json={"mode": "presentation", "language": "vi"}).json()["id"]
+        anonymous = {"Authorization": ""}
+
+        assert client.get("/sessions", headers=anonymous).status_code == 401
+        assert client.get(f"/sessions/{session_id}", headers=anonymous).status_code == 401
+        assert client.get(f"/sessions/{session_id}/report", headers=anonymous).status_code == 401
+        assert client.delete(f"/sessions/{session_id}", headers=anonymous).status_code == 401
+        assert client.post(
+            "/sessions", json={"mode": "presentation", "language": "vi"}, headers=anonymous
+        ).status_code == 401
+
+    def test_an_unowned_legacy_session_is_listed_for_nobody(self, client: TestClient) -> None:
+        """
+        Rows from before accounts existed have `user_id = NULL`. They belong to
+        nobody, so they appear on nobody's dashboard until
+        `scripts/assign_orphan_sessions.py` gives them an owner -- which is
+        exactly why that script exists.
+        """
+        session_id = client.post("/sessions", json={"mode": "presentation", "language": "vi"}).json()["id"]
+
+        db = next(app_module.app.dependency_overrides[get_db]())
+        try:
+            db.get(dbm.AnalysisSession, uuid.UUID(session_id)).user_id = None
+            db.commit()
+        finally:
+            db.close()
+
+        assert client.get("/sessions").json() == []
