@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion } from 'motion/react'
-import { Microphone, Record, Stop, Warning, UploadSimple } from '@phosphor-icons/react'
+import { Microphone, Record, Stop, Warning, UploadSimple, FileVideo, VideoCamera } from '@phosphor-icons/react'
 import { createSelfPracticeSession } from '../lib/api'
 import type { SelfPracticeProfile } from '../types'
 import { cn } from '../lib/utils'
+
+// Matches routers/self_practice.py's _ALLOWED_EXTENSIONS.
+const ALLOWED_UPLOAD_EXTENSIONS = ['.mp4', '.mov', '.m4v', '.webm']
 
 // Same MIME-detection approach as Practice.tsx, but video+audio together --
 // this flow uploads the whole recording once, it does not stream chunks.
@@ -32,15 +35,23 @@ const PROFILES: { value: SelfPracticeProfile; label: string; hint: string }[] = 
 ]
 
 type Phase = 'setup' | 'recording' | 'preview' | 'uploading' | 'failed'
+type SourceMode = 'record' | 'upload'
+
+function hasAllowedExtension(filename: string): boolean {
+  const lower = filename.toLowerCase()
+  return ALLOWED_UPLOAD_EXTENSIONS.some(ext => lower.endsWith(ext))
+}
 
 export default function SelfPractice() {
   const navigate = useNavigate()
 
   const [profile, setProfile] = useState<SelfPracticeProfile>('presentation_solo')
+  const [sourceMode, setSourceMode] = useState<SourceMode>('record')
   const [phase, setPhase] = useState<Phase>('setup')
   const [elapsed, setElapsed] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [dragOver, setDragOver] = useState(false)
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -48,6 +59,8 @@ export default function SelfPractice() {
   const chunksRef = useRef<Blob[]>([])
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const recordedBlobRef = useRef<Blob | null>(null)
+  const uploadFilenameRef = useRef<string>('luyen-tap.webm')
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const supported = typeof MediaRecorder !== 'undefined' && !!navigator.mediaDevices?.getUserMedia
 
@@ -98,6 +111,7 @@ export default function SelfPractice() {
     recorder.onstop = () => {
       const blob = new Blob(chunksRef.current, { type: mime })
       recordedBlobRef.current = blob
+      uploadFilenameRef.current = `luyen-tap.${mime.includes('mp4') ? 'mp4' : 'webm'}`
       setPreviewUrl(URL.createObjectURL(blob))
       setPhase('preview')
     }
@@ -124,14 +138,25 @@ export default function SelfPractice() {
     setPhase('setup')
   }, [previewUrl])
 
+  const handleFileSelected = useCallback((file: File) => {
+    setError(null)
+    if (!hasAllowedExtension(file.name)) {
+      setError(`Định dạng không được hỗ trợ. Chỉ nhận: ${ALLOWED_UPLOAD_EXTENSIONS.join(', ')}`)
+      return
+    }
+    recordedBlobRef.current = file
+    uploadFilenameRef.current = file.name
+    setPreviewUrl(URL.createObjectURL(file))
+    setPhase('preview')
+  }, [])
+
   const handleUpload = useCallback(async () => {
     const blob = recordedBlobRef.current
     if (!blob) return
     setPhase('uploading')
     setError(null)
     try {
-      const extension = blob.type.includes('mp4') ? 'mp4' : 'webm'
-      const session = await createSelfPracticeSession(profile, blob, `luyen-tap.${extension}`)
+      const session = await createSelfPracticeSession(profile, blob, uploadFilenameRef.current)
       navigate(`/app/phien/${session.id}`)
     } catch (err: any) {
       setError(err?.response?.data?.detail || 'Không thể tải lên bản ghi.')
@@ -144,7 +169,8 @@ export default function SelfPractice() {
       <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
         <h1 className="text-2xl font-semibold text-text-primary">Tự luyện tập</h1>
         <p className="mt-2 text-sm text-text-secondary">
-          Ghi hình trước webcam, hệ thống sẽ chỉ ra những điểm đo được trên video -- không chấm điểm tổng.
+          Ghi hình trực tiếp trước webcam hoặc tải lên một video đã quay sẵn -- hệ thống sẽ chỉ ra những
+          điểm đo được trên video, không chấm điểm tổng.
         </p>
       </motion.div>
 
@@ -187,15 +213,78 @@ export default function SelfPractice() {
               </button>
             ))}
           </div>
-          <button
-            type="button"
-            onClick={handleStart}
-            disabled={!supported}
-            className="inline-flex items-center gap-2 rounded-lg bg-accent px-5 py-2.5 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-50"
-          >
-            <Record className="h-4 w-4" weight="fill" />
-            Bắt đầu ghi hình
-          </button>
+
+          <div className="mb-4 inline-flex rounded-lg border border-border p-1">
+            <button
+              type="button"
+              onClick={() => setSourceMode('record')}
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                sourceMode === 'record' ? 'bg-accent text-white' : 'text-text-secondary hover:text-text-primary'
+              )}
+            >
+              <VideoCamera className="h-3.5 w-3.5" />
+              Ghi trực tiếp
+            </button>
+            <button
+              type="button"
+              onClick={() => setSourceMode('upload')}
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                sourceMode === 'upload' ? 'bg-accent text-white' : 'text-text-secondary hover:text-text-primary'
+              )}
+            >
+              <FileVideo className="h-3.5 w-3.5" />
+              Tải video có sẵn
+            </button>
+          </div>
+
+          {sourceMode === 'record' ? (
+            <div>
+              <button
+                type="button"
+                onClick={handleStart}
+                disabled={!supported}
+                className="inline-flex items-center gap-2 rounded-lg bg-accent px-5 py-2.5 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-50"
+              >
+                <Record className="h-4 w-4" weight="fill" />
+                Bắt đầu ghi hình
+              </button>
+            </div>
+          ) : (
+            <div>
+              <div
+                onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={e => {
+                  e.preventDefault()
+                  setDragOver(false)
+                  const file = e.dataTransfer.files[0]
+                  if (file) handleFileSelected(file)
+                }}
+                onClick={() => fileInputRef.current?.click()}
+                className={cn(
+                  'flex cursor-pointer flex-col items-center gap-2 rounded-lg border-2 border-dashed p-8 text-center transition-colors',
+                  dragOver ? 'border-accent bg-accent-light/30' : 'border-border hover:border-accent/40'
+                )}
+              >
+                <FileVideo className="h-8 w-8 text-text-muted" />
+                <p className="text-sm font-medium text-text-primary">Kéo thả video vào đây, hoặc bấm để chọn</p>
+                <p className="text-xs text-text-muted">Định dạng: {ALLOWED_UPLOAD_EXTENSIONS.join(', ')}</p>
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ALLOWED_UPLOAD_EXTENSIONS.join(',')}
+                className="hidden"
+                onChange={e => {
+                  const file = e.target.files?.[0]
+                  if (file) handleFileSelected(file)
+                  e.target.value = ''
+                }}
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -242,7 +331,7 @@ export default function SelfPractice() {
               disabled={phase === 'uploading'}
               className="rounded-lg border border-border px-5 py-2.5 text-sm font-medium text-text-secondary hover:bg-surface-elevated disabled:opacity-50"
             >
-              Ghi lại
+              {sourceMode === 'upload' ? 'Chọn video khác' : 'Ghi lại'}
             </button>
           </div>
         </div>
