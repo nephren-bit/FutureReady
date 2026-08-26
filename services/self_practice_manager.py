@@ -120,8 +120,8 @@ class SelfPracticeManager:
             profile = load_profile(session.profile)
             video_path = Path(session.video_file_path)
 
-            _video_feature, frames, timestamps = VideoExtractor().extract_with_frames(video_path)
-            pose = PoseAnalyzer(profile).analyze(list(zip(frames, timestamps)))
+            video_feature, frames, timestamps = VideoExtractor().extract_with_frames(video_path)
+            pose = PoseAnalyzer(profile).analyze(list(zip(frames, timestamps)), source_fps=video_feature.fps)
             events = EventDetector(profile).detect(session_id=str(session_id), pose=pose)
 
             db.add(pose_to_orm(session_id, pose))

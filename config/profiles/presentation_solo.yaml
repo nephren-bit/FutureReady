@@ -15,6 +15,13 @@
 # như thiết kế (xem `analyzers/landmark_availability.py`), chứ không trả về 0.
 # Ngưỡng thời lượng tối thiểu (`min_duration_sec`) copy nguyên từ bối cảnh
 # đứng xa nên nhiều khả năng cần điều chỉnh khi có dữ liệu ngồi gần thật.
+#
+# Khác một chỗ so với presentation_class: E_STATIC/E_PACING/E_TURNED_AWAY ở
+# đây báo khung hình bắt đầu sự kiện (`report.value: frame`) thay vì tỷ lệ
+# chuẩn hoá gốc ("lần rộng vai mỗi giây", "lần mức tham chiếu") — số nguyên
+# dễ hiểu hơn cho người xem lại, không cần biết đơn vị kỹ thuật là gì.
+# `presentation_class.yaml` (hồ sơ lớp học cũ) giữ nguyên kiểu báo cáo gốc,
+# không đổi theo.
 
 profile: presentation_solo
 version: "0.1.0"
@@ -109,10 +116,12 @@ events:
         threshold: 0.04
     min_duration_sec: 25.0
     merge_gap_sec: 2.0
+    # value: frame -- báo khung hình bắt đầu sự kiện thay vì tỷ lệ chuẩn hoá
+    # "lần rộng vai mỗi giây": số nguyên dễ định vị hơn số thập phân kỹ thuật.
     report:
-      value: mean:motion_rate
-      unit: "lần rộng vai/giây"
-    label_template: "Không dịch chuyển trong {duration} giây (dịch chuyển trung bình {value} lần rộng vai mỗi giây)"
+      value: frame
+      unit: "khung hình"
+    label_template: "Không dịch chuyển trong {duration} giây (bắt đầu ở khung hình {value})"
 
   E_PACING:
     requires_metrics: [movement_range]
@@ -123,9 +132,9 @@ events:
     min_duration_sec: 8.0
     merge_gap_sec: 2.0
     report:
-      value: mean:horizontal_rate
-      unit: "lần rộng vai/giây"
-    label_template: "Di chuyển ngang trung bình {value} lần rộng vai mỗi giây, kéo dài {duration} giây"
+      value: frame
+      unit: "khung hình"
+    label_template: "Di chuyển ngang liên tục {duration} giây (bắt đầu ở khung hình {value})"
 
   E_TURNED_AWAY:
     requires_metrics: [turned_away_ratio]
@@ -136,9 +145,9 @@ events:
     min_duration_sec: 5.0
     merge_gap_sec: 2.0
     report:
-      value: min:shoulder_width_ratio
-      unit: "lần mức tham chiếu"
-    label_template: "Quay người khỏi hướng khán giả {duration} giây (chiều rộng vai còn {value} lần mức tham chiếu)"
+      value: frame
+      unit: "khung hình"
+    label_template: "Quay người khỏi hướng khán giả {duration} giây (bắt đầu ở khung hình {value})"
 
   E_CLOSED_POSTURE:
     requires_metrics: [closed_posture_ratio]

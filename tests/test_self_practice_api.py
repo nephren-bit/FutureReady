@@ -13,6 +13,7 @@ not just a mocked response shape.
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -66,14 +67,14 @@ class _FakeVideoExtractor:
         pass
 
     def extract_with_frames(self, path):
-        return None, [], []
+        return SimpleNamespace(fps=30.0), [], []
 
 
 class _FakePoseAnalyzer:
     def __init__(self, *args, **kwargs) -> None:
         pass
 
-    def analyze(self, frames_with_timestamps):
+    def analyze(self, frames_with_timestamps, source_fps=0.0):
         return _head_down_pose()
 
 

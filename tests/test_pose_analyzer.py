@@ -18,10 +18,10 @@ import pytest
 from analyzers.landmark_availability import LandmarkAvailabilityChecker
 from analyzers.pose_analyzer import LandmarkFrame, PoseAnalyzer, apply_head_pose_fallback
 from events.detector import EventDetector
-from events.rules import SpeculativeLabelError, assert_descriptive, format_number
+from events.rules import EventRule, Segment, SpeculativeLabelError, assert_descriptive, format_number
 from models.features import FaceMeshFeature, PoseFeature, PoseFrameSample, PoseMetric
 from models.notes import SelfNote
-from models.profiles import ContextProfile, LandmarkGroup
+from models.profiles import ContextProfile, EventRuleSpec, LandmarkGroup, RuleReport
 from services.profile_loader import available_profiles, load_profile
 
 # MediaPipe Pose indices the synthetic skeleton fills in.
@@ -397,6 +397,34 @@ class TestEventDetector:
         bad = [dict(NEUTRAL, shoulder_tilt_deg=25.0) for _ in range(40)]
         assert [e for e in EventDetector().detect("s1", pose_with(series_from(bad)))
                 if e.type == "E_STABLE_SEGMENT"] == []
+
+
+class TestFrameReporting:
+    """
+    `report.value: frame` (config/profiles/presentation_solo.yaml's
+    E_STATIC/E_PACING/E_TURNED_AWAY) reports the source video's frame number
+    at a segment's start -- a plain whole number, instead of a normalized
+    ratio like "0,04 lần rộng vai mỗi giây" that only means something to
+    someone who already knows the metric's unit.
+    """
+
+    @staticmethod
+    def _frame_rule() -> EventRule:
+        spec = EventRuleSpec(report=RuleReport(value="frame", unit="khung hình"), label_template="{value}")
+        return EventRule("E_TEST", spec, ContextProfile(profile="x"))
+
+    def test_frame_number_is_the_start_second_times_source_fps(self) -> None:
+        segment = Segment(start_sec=2.5, end_sec=3.5, samples=())
+        assert self._frame_rule().measured_value(segment, source_fps=30.0) == 75
+
+    def test_frame_number_is_a_whole_number_not_a_ratio(self) -> None:
+        segment = Segment(start_sec=1.0 / 3.0, end_sec=1.0, samples=())
+        value = self._frame_rule().measured_value(segment, source_fps=24.0)
+        assert value == int(value)
+
+    def test_missing_source_fps_falls_back_to_the_plain_second(self) -> None:
+        segment = Segment(start_sec=4.2, end_sec=5.0, samples=())
+        assert self._frame_rule().measured_value(segment, source_fps=0.0) == 4
 
 
 class TestLabelDiscipline:

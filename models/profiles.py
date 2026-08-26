@@ -112,7 +112,8 @@ class RuleReport(BaseModel):
     """
     What goes into `PresentationEvent.measured_value` / `.unit` for a segment.
 
-    `value` is one of `duration`, or `<aggregate>:<signal>` where aggregate is
+    `value` is one of `duration`, `frame` (the source video's frame number at
+    the segment's start), or `<aggregate>:<signal>` where aggregate is
     `mean`, `max`, or `min`.
     """
 

@@ -86,7 +86,7 @@ class EventDetector:
                 continue
             if not rule.applies_to(pose):
                 continue
-            events.extend(self._detect_one(session_id, rule, pose.series))
+            events.extend(self._detect_one(session_id, rule, pose.series, pose.source_fps))
 
         events.sort(key=lambda event: (event.start_sec, event.type))
         logger.info(
@@ -103,13 +103,13 @@ class EventDetector:
     # ------------------------------------------------------------------
 
     def _detect_one(
-        self, session_id: str, rule: EventRule, series: list[PoseFrameSample]
+        self, session_id: str, rule: EventRule, series: list[PoseFrameSample], source_fps: float
     ) -> list[PresentationEvent]:
         """Run one rule end to end over the time series."""
         runs = self._consecutive_runs(rule, series)                       # steps 2-3
         long_enough = [run for run in runs if run.duration_sec >= rule.spec.min_duration_sec]  # step 4
         merged = self._merge_close(long_enough, rule.spec.merge_gap_sec)  # step 5
-        return [self._to_event(session_id, rule, segment) for segment in merged]  # step 6
+        return [self._to_event(session_id, rule, segment, source_fps) for segment in merged]  # step 6
 
     @staticmethod
     def _consecutive_runs(rule: EventRule, series: list[PoseFrameSample]) -> list[Segment]:
@@ -166,9 +166,9 @@ class EventDetector:
                 merged.append(segment)
         return merged
 
-    def _to_event(self, session_id: str, rule: EventRule, segment: Segment) -> PresentationEvent:
+    def _to_event(self, session_id: str, rule: EventRule, segment: Segment, source_fps: float) -> PresentationEvent:
         """Step 6: attach the measured value, the unit, the label, and the rule version."""
-        value = rule.measured_value(segment)
+        value = rule.measured_value(segment, source_fps)
         return PresentationEvent(
             session_id=session_id,
             profile=self._profile.profile,

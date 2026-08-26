@@ -168,6 +168,14 @@ class PoseFeature(BaseModel):
     sampling_warning: str | None = Field(
         None, description="Set when sampling is too sparse for the profile's event rules."
     )
+    source_fps: float = Field(
+        0.0,
+        description=(
+            "The original video's frame rate (not the sampling rate above). Lets "
+            "events/rules.py report a real frame number for `report.value: frame` "
+            "instead of a raw decimal timestamp."
+        ),
+    )
 
     head_up_ratio: PoseMetric = Field(default_factory=PoseMetric)
     postural_sway: PoseMetric = Field(default_factory=PoseMetric)

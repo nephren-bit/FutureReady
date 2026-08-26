@@ -167,18 +167,23 @@ class EventRule:
 
     # -- reporting ----------------------------------------------------
 
-    def measured_value(self, segment: Segment) -> float:
+    def measured_value(self, segment: Segment, source_fps: float = 0.0) -> float:
         """
         The number that goes on the event, per the rule's `report.value`.
 
-        `duration` reports the segment length; `mean:<signal>` /
-        `max:<signal>` / `min:<signal>` aggregate one signal across the
-        segment. An aggregate over a signal no frame carried falls back to
-        the duration, so an event always carries a real observation.
+        `duration` reports the segment length; `frame` reports the source
+        video's frame number at the segment's start (a plain whole number --
+        easier to place than a raw decimal second or a normalized ratio);
+        `mean:<signal>` / `max:<signal>` / `min:<signal>` aggregate one
+        signal across the segment. An aggregate over a signal no frame
+        carried falls back to the duration, so an event always carries a
+        real observation.
         """
         spec = self.spec.report.value
         if spec == "duration":
             return round(segment.duration_sec, 4)
+        if spec == "frame":
+            return self._frame_number(segment.start_sec, source_fps)
 
         aggregate_name, _, signal = spec.partition(":")
         aggregate = _AGGREGATES.get(aggregate_name)
@@ -202,6 +207,22 @@ class EventRule:
             )
             return round(segment.duration_sec, 4)
         return round(float(aggregate(values)), 4)
+
+    @staticmethod
+    def _frame_number(start_sec: float, source_fps: float) -> float:
+        """
+        The source video's frame number at a segment's start.
+
+        Falls back to the raw second if `source_fps` isn't available (a
+        synthetic `PoseFeature` in a test, never a real self-practice
+        recording -- `services/self_practice_manager.py` always supplies
+        `VideoFeature.fps`), logged so a missing fps doesn't silently read as
+        a real frame number.
+        """
+        if source_fps <= 0:
+            logger.warning("No source_fps available; reporting the start second as the frame number instead.")
+            return round(start_sec)
+        return round(start_sec * source_fps)
 
     def render_label(self, segment: Segment, value: float) -> str:
         """Fill the profile's label template. Describes the measurement, nothing more."""

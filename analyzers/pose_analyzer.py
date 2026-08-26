@@ -244,19 +244,24 @@ class PoseAnalyzer(BaseAnalyzer[list[tuple[np.ndarray, float]], PoseFeature]):
     # Entry points
     # ------------------------------------------------------------------
 
-    def analyze(self, data: list[tuple[np.ndarray, float]]) -> PoseFeature:
+    def analyze(self, data: list[tuple[np.ndarray, float]], source_fps: float = 0.0) -> PoseFeature:
         """
         Args:
             data: List of (BGR frame, timestamp_sec) tuples, as produced by
                 `VideoExtractor.extract_with_frames`.
+            source_fps: The original video's frame rate (`VideoFeature.fps`),
+                carried onto the result so `events/rules.py` can report a
+                real frame number for an event's start instead of a raw
+                decimal timestamp. Optional -- callers that don't have a
+                `VideoFeature` (tests, synthetic clips) can omit it.
 
         Returns:
             A `PoseFeature` with the seven body-movement metrics, the
             landmark-availability verdict, and the per-frame time series.
         """
-        return self.analyze_landmarks(self._detect(data))
+        return self.analyze_landmarks(self._detect(data), source_fps=source_fps)
 
-    def analyze_landmarks(self, frames: list[LandmarkFrame]) -> PoseFeature:
+    def analyze_landmarks(self, frames: list[LandmarkFrame], source_fps: float = 0.0) -> PoseFeature:
         """
         Compute every metric from already-detected landmarks.
 
@@ -295,6 +300,7 @@ class PoseAnalyzer(BaseAnalyzer[list[tuple[np.ndarray, float]], PoseFeature]):
             landmark_group_availability=availability.to_models(),
             sampling_rate_hz=round(sampling_rate, _ROUND_DECIMALS),
             sampling_warning=sampling_warning,
+            source_fps=source_fps,
             series=series,
             **metrics,
         )

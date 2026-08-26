@@ -61,6 +61,7 @@ def pose_to_orm(session_id: uuid.UUID, feature: PoseFeature) -> PoseFeatureORM:
         landmark_group_availability=[entry.model_dump(mode="json") for entry in feature.landmark_group_availability],
         sampling_rate_hz=feature.sampling_rate_hz,
         sampling_warning=feature.sampling_warning,
+        source_fps=feature.source_fps,
         **metric_columns,
         series_json=[sample.model_dump(mode="json") for sample in feature.series],
     )
@@ -86,6 +87,7 @@ def orm_to_pose(row: PoseFeatureORM) -> PoseFeature:
         ],
         sampling_rate_hz=row.sampling_rate_hz,
         sampling_warning=row.sampling_warning,
+        source_fps=row.source_fps,
         series=[PoseFrameSample.model_validate(entry) for entry in row.series_json],
         **metric_kwargs,
     )

@@ -151,6 +151,7 @@ class PoseFeatureORM(Base):
     landmark_group_availability: Mapped[list] = mapped_column(JSON, default=list)
     sampling_rate_hz: Mapped[float] = mapped_column(Float, default=0.0)
     sampling_warning: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_fps: Mapped[float] = mapped_column(Float, default=0.0)
 
     head_up_ratio: Mapped[float | None] = mapped_column(Float, nullable=True)
     head_up_ratio_measured: Mapped[bool] = mapped_column(Boolean, default=False)
