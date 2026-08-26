@@ -1,13 +1,9 @@
 import axios from 'axios'
 import type {
-  Session,
-  SessionCreateResponse,
-  EvaluationReport,
-  PreliminaryEvaluation,
-  RecommendationList,
-  PracticeSession,
-  PracticeEvaluation,
-  EvaluationMode,
+  SelfPracticeSession,
+  SelfPracticeSessionSummary,
+  SelfPracticeProfile,
+  SelfNote,
 } from '../types'
 
 const api = axios.create({
@@ -15,137 +11,63 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
-export async function createSession(
-  mode: 'presentation' | 'interview',
-  language = 'vi'
-): Promise<SessionCreateResponse> {
-  const { data } = await api.post('/sessions', { mode, language })
+// ---------------------------------------------------------------------------
+// Self Practice (specs/in-class-analysis) -- the product's sole API.
+//
+// (This file used to also call a Session API and a Live Practice API for a
+// larger upload-and-score evaluation pipeline -- removed along with that
+// pipeline.)
+// ---------------------------------------------------------------------------
+
+export async function listSelfPracticeSessions(): Promise<SelfPracticeSessionSummary[]> {
+  const { data } = await api.get('/self-practice')
   return data
 }
 
-export async function getSession(id: string): Promise<Session> {
-  const { data } = await api.get(`/sessions/${id}`)
-  return data
-}
-
-export async function uploadSlide(id: string, file: File): Promise<{ message: string }> {
+export async function createSelfPracticeSession(
+  profile: SelfPracticeProfile,
+  video: Blob,
+  filename: string
+): Promise<SelfPracticeSession> {
   const form = new FormData()
-  form.append('file', file)
-  const { data } = await api.post(`/sessions/${id}/slide`, form, {
+  form.append('profile', profile)
+  form.append('video', video, filename)
+  const { data } = await api.post('/self-practice', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
   return data
 }
 
-export async function uploadResume(id: string, file: File): Promise<{ message: string }> {
-  const form = new FormData()
-  form.append('file', file)
-  const { data } = await api.post(`/sessions/${id}/resume`, form, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  })
+export async function getSelfPracticeSession(id: string): Promise<SelfPracticeSession> {
+  const { data } = await api.get(`/self-practice/${id}`)
   return data
 }
 
-export async function uploadVideo(id: string, file: File): Promise<{ message: string }> {
-  const form = new FormData()
-  form.append('file', file)
-  const { data } = await api.post(`/sessions/${id}/video`, form, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  })
+export async function deleteSelfPracticeSession(id: string): Promise<void> {
+  await api.delete(`/self-practice/${id}`)
+}
+
+// Points a plain <video src> straight at the backend (proxied via /api, see
+// vite.config.ts) rather than going through axios -- the browser streams and
+// seeks the file itself.
+export function selfPracticeVideoUrl(id: string): string {
+  return `/api/self-practice/${id}/video`
+}
+
+export async function createSelfNote(sessionId: string, markSec: number, text = ''): Promise<SelfNote> {
+  const { data } = await api.post(`/self-practice/${sessionId}/notes`, { mark_sec: markSec, text })
   return data
 }
 
-export async function getReport(id: string): Promise<EvaluationReport> {
-  const { data } = await api.get(`/sessions/${id}/report`)
+export async function updateSelfNote(
+  sessionId: string,
+  noteId: string,
+  patch: { mark_sec?: number; text?: string }
+): Promise<SelfNote> {
+  const { data } = await api.patch(`/self-practice/${sessionId}/notes/${noteId}`, patch)
   return data
 }
 
-export async function getPreliminary(
-  id: string,
-  stage: string
-): Promise<PreliminaryEvaluation> {
-  const { data } = await api.get(`/sessions/${id}/preliminary/${stage}`)
-  return data
-}
-
-export async function getRecommendations(id: string): Promise<RecommendationList> {
-  const { data } = await api.get(`/sessions/${id}/recommendations`)
-  return data
-}
-
-export async function retrySession(id: string): Promise<{ message: string }> {
-  const { data } = await api.post(`/sessions/${id}/retry`)
-  return data
-}
-
-export async function deleteSession(id: string): Promise<void> {
-  await api.delete(`/sessions/${id}`)
-}
-
-export async function listSessions(): Promise<Session[]> {
-  const { data } = await api.get('/sessions')
-  return data
-}
-
-export async function getPracticeSession(id: string): Promise<PracticeSession> {
-  const { data } = await api.get(`/practice/${id}`)
-  return data
-}
-
-export async function getPracticeEvaluation(id: string): Promise<PracticeEvaluation> {
-  const { data } = await api.get(`/practice/${id}/evaluation`)
-  return data
-}
-
-// Creates a practice session ahead of streaming, so a slide deck/resume can
-// be attached (via uploadPracticeSlide/uploadPracticeResume below) before the
-// WebSocket ever opens. Optional -- a plain audio-only practice can skip
-// this and let `WS /practice/stream` create its own session, as before.
-export async function createPracticeSession(
-  mode: EvaluationMode | null,
-  language = 'vi'
-): Promise<PracticeSession> {
-  const { data } = await api.post('/practice', { mode, language })
-  return data
-}
-
-export async function uploadPracticeSlide(id: string, file: File): Promise<PracticeSession> {
-  const form = new FormData()
-  form.append('file', file)
-  const { data } = await api.post(`/practice/${id}/slide`, form, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  })
-  return data
-}
-
-// Points an <iframe>/<a> straight at the backend (proxied via /api, see
-// vite.config.ts) rather than going through axios, since this is rendered
-// directly by the browser, not consumed as JSON. The backend converts the
-// attached .pptx to PDF on demand via LibreOffice (see routers/practice.py).
-export function practiceSlidePreviewUrl(practiceSessionId: string): string {
-  return `/api/practice/${practiceSessionId}/slide/preview`
-}
-
-export async function uploadPracticeResume(id: string, file: File): Promise<PracticeSession> {
-  const form = new FormData()
-  form.append('file', file)
-  const { data } = await api.post(`/practice/${id}/resume`, form, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  })
-  return data
-}
-
-// `/api` is proxied to the backend for plain HTTP (see vite.config.ts), but a
-// WebSocket needs its own absolute ws(s):// URL -- axios/fetch don't apply here.
-// `practiceSessionId`, if given, reuses a session already created via
-// `createPracticeSession` (with its slide/resume already attached) instead of
-// having the backend create a fresh one.
-export function practiceStreamUrl(
-  language: string,
-  audioFormat: string,
-  practiceSessionId?: string
-): string {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const base = `${protocol}//${window.location.host}/api/practice/stream?language=${encodeURIComponent(language)}&audio_format=${audioFormat}`
-  return practiceSessionId ? `${base}&practice_session_id=${practiceSessionId}` : base
+export async function deleteSelfNote(sessionId: string, noteId: string): Promise<void> {
+  await api.delete(`/self-practice/${sessionId}/notes/${noteId}`)
 }

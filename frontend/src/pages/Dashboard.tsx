@@ -1,11 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'motion/react'
-import { Plus, FileText, VideoCamera, Trash, ArrowClockwise } from '@phosphor-icons/react'
-import { listSessions, deleteSession, retrySession } from '../lib/api'
+import { Plus, VideoCamera, Trash, ArrowClockwise, Warning } from '@phosphor-icons/react'
+import { listSelfPracticeSessions, deleteSelfPracticeSession } from '../lib/api'
 import { cn } from '../lib/utils'
-import type { Session, SessionState } from '../types'
-import { STATE_LABELS } from '../types'
+import type { SelfPracticeSessionSummary, SelfPracticeState } from '../types'
 
 function formatDate(iso: string): string {
   return new Intl.DateTimeFormat('vi-VN', {
@@ -17,16 +16,21 @@ function formatDate(iso: string): string {
   }).format(new Date(iso))
 }
 
-function stateColor(state: SessionState): string {
+const STATE_LABELS: Record<SelfPracticeState, string> = {
+  processing: 'Đang xử lý',
+  completed: 'Hoàn tất',
+  failed: 'Thất bại',
+}
+
+function stateColor(state: SelfPracticeState): string {
   if (state === 'completed') return 'bg-success-light text-success'
   if (state === 'failed') return 'bg-error-light text-error'
-  if (state === 'empty') return 'bg-surface-elevated text-text-secondary'
   return 'bg-accent-light text-accent'
 }
 
-function modeBadge(mode: string): string {
-  if (mode === 'presentation') return 'bg-accent-light text-accent'
-  return 'bg-emerald-50 text-emerald-600'
+const PROFILE_LABELS: Record<string, string> = {
+  presentation_solo: 'Thuyết trình',
+  interview_solo: 'Phỏng vấn',
 }
 
 function SkeletonCard() {
@@ -38,7 +42,6 @@ function SkeletonCard() {
       </div>
       <div className="space-y-2">
         <div className="h-4 w-32 rounded bg-surface-elevated animate-pulse" />
-        <div className="h-3 w-48 rounded bg-surface-elevated animate-pulse" />
         <div className="h-3 w-40 rounded bg-surface-elevated animate-pulse" />
       </div>
     </div>
@@ -46,26 +49,17 @@ function SkeletonCard() {
 }
 
 export default function Dashboard() {
-  const [sessions, setSessions] = useState<Session[]>([])
+  const [sessions, setSessions] = useState<SelfPracticeSessionSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
-  const [retryingId, setRetryingId] = useState<string | null>(null)
 
   const fetchSessions = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const data = await listSessions()
-      // A session is only "used" once at least one material has been
-      // uploaded to it -- `state === 'empty'` means it was created (via
-      // "Phiên mới") and then abandoned before any upload, so it isn't
-      // worth keeping around cluttering the dashboard.
-      const unused = data.filter((s) => s.state === 'empty')
-      if (unused.length > 0) {
-        await Promise.allSettled(unused.map((s) => deleteSession(s.id)))
-      }
-      setSessions(data.filter((s) => s.state !== 'empty'))
+      const data = await listSelfPracticeSessions()
+      setSessions(data)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Không thể tải danh sách phiên'
       setError(message)
@@ -85,29 +79,13 @@ export default function Dashboard() {
     if (!window.confirm('Bạn có chắc muốn xóa phiên này?')) return
     setDeletingId(id)
     try {
-      await deleteSession(id)
+      await deleteSelfPracticeSession(id)
       setSessions((prev) => prev.filter((s) => s.id !== id))
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Không thể xóa phiên'
       alert(message)
     } finally {
       setDeletingId(null)
-    }
-  }
-
-  async function handleRetry(e: React.MouseEvent, id: string) {
-    e.preventDefault()
-    e.stopPropagation()
-    if (retryingId) return
-    setRetryingId(id)
-    try {
-      await retrySession(id)
-      await fetchSessions()
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Không thể thử lại phiên'
-      alert(message)
-    } finally {
-      setRetryingId(null)
     }
   }
 
@@ -122,6 +100,15 @@ export default function Dashboard() {
           <h1 className="text-2xl sm:text-3xl font-semibold text-text-primary">
             Bảng điều khiển
           </h1>
+          {sessions.length > 0 && (
+            <Link
+              to="/app/luyen-tap"
+              className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-hover transition-colors"
+            >
+              <Plus size={16} weight="bold" />
+              Ghi phiên mới
+            </Link>
+          )}
         </div>
 
         {loading && (
@@ -134,6 +121,7 @@ export default function Dashboard() {
 
         {!loading && error && (
           <div className="text-center py-16">
+            <Warning className="h-8 w-8 text-error mx-auto mb-3" weight="bold" />
             <p className="text-error text-sm mb-4">{error}</p>
             <button
               onClick={fetchSessions}
@@ -156,16 +144,16 @@ export default function Dashboard() {
             className="text-center py-20"
           >
             <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-surface-elevated mb-6">
-              <FileText size={36} className="text-text-muted" />
+              <VideoCamera size={36} className="text-text-muted" />
             </div>
             <h2 className="text-lg font-semibold text-text-primary mb-2">
-              Chưa có phiên nào
+              Chưa có phiên tự luyện nào
             </h2>
             <p className="text-text-muted text-sm mb-6 max-w-xs mx-auto">
-              Tạo phiên đầu tiên để bắt đầu đánh giá bài thuyết trình hoặc hiệu suất phỏng vấn của bạn.
+              Ghi lại buổi thuyết trình hoặc phỏng vấn tự luyện đầu tiên của bạn trước webcam.
             </p>
             <Link
-              to="/app/new"
+              to="/app/luyen-tap"
               className={cn(
                 'inline-flex items-center gap-2 px-5 py-2.5 rounded-lg',
                 'bg-accent text-white font-medium text-sm',
@@ -173,7 +161,7 @@ export default function Dashboard() {
               )}
             >
               <Plus size={18} weight="bold" />
-              Tạo phiên đầu tiên
+              Ghi phiên đầu tiên
             </Link>
           </motion.div>
         )}
@@ -188,7 +176,7 @@ export default function Dashboard() {
                 transition={{ duration: 0.3, delay: index * 0.05 }}
               >
                 <Link
-                  to={`/app/sessions/${session.id}`}
+                  to={`/app/phien/${session.id}`}
                   className={cn(
                     'block rounded-xl border border-border bg-surface p-5',
                     'transition-all duration-200',
@@ -198,79 +186,32 @@ export default function Dashboard() {
                 >
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
-                      {session.mode === 'presentation' ? (
-                        <FileText size={16} className="text-accent" />
-                      ) : (
-                        <VideoCamera size={16} className="text-emerald-600" />
-                      )}
-                      <span
-                        className={cn(
-                          'inline-block px-2.5 py-0.5 rounded-full text-xs font-medium capitalize',
-                          modeBadge(session.mode)
-                        )}
-                      >
-                        {session.mode === 'presentation' ? 'Thuyết trình' : 'Phỏng vấn'}
+                      <VideoCamera size={16} className="text-accent" />
+                      <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-medium bg-accent-light text-accent">
+                        {PROFILE_LABELS[session.profile] ?? session.profile}
                       </span>
                     </div>
-                    <div className="flex items-center gap-1">
-                      {session.state === 'failed' && (
-                        <button
-                          onClick={(e) => handleRetry(e, session.id)}
-                          disabled={retryingId === session.id}
-                          className={cn(
-                            'p-1.5 rounded-md text-text-muted',
-                            'hover:text-warning hover:bg-warning-light transition-colors',
-                            'disabled:opacity-40 disabled:cursor-not-allowed'
-                          )}
-                          title="Thử lại phiên"
-                        >
-                          <ArrowClockwise
-                            size={15}
-                            className={retryingId === session.id ? 'animate-spin' : ''}
-                          />
-                        </button>
+                    <button
+                      onClick={(e) => handleDelete(e, session.id)}
+                      disabled={deletingId === session.id}
+                      className={cn(
+                        'p-1.5 rounded-md text-text-muted',
+                        'hover:text-error hover:bg-error-light transition-colors',
+                        'disabled:opacity-40 disabled:cursor-not-allowed'
                       )}
-                      <button
-                        onClick={(e) => handleDelete(e, session.id)}
-                        disabled={deletingId === session.id}
-                        className={cn(
-                          'p-1.5 rounded-md text-text-muted',
-                          'hover:text-error hover:bg-error-light transition-colors',
-                          'disabled:opacity-40 disabled:cursor-not-allowed'
-                        )}
-                        title="Xóa phiên"
-                      >
-                        <Trash size={15} />
-                      </button>
-                    </div>
+                      title="Xóa phiên"
+                    >
+                      <Trash size={15} />
+                    </button>
                   </div>
 
                   <div className="mb-3">
-                    <span
-                      className={cn(
-                        'inline-block px-2 py-0.5 rounded text-xs font-medium',
-                        stateColor(session.state)
-                      )}
-                    >
+                    <span className={cn('inline-block px-2 py-0.5 rounded text-xs font-medium', stateColor(session.state))}>
                       {STATE_LABELS[session.state]}
                     </span>
                   </div>
 
-                  <div className="space-y-1 text-xs text-text-muted">
-                    <p>{formatDate(session.created_at)}</p>
-                    {(session.has_slide || session.has_resume) && (
-                      <p className="flex items-center gap-1">
-                        <FileText size={12} />
-                        {session.mode === 'presentation' ? 'Đã tải slide' : 'Đã tải CV'}
-                      </p>
-                    )}
-                    {session.has_video && (
-                      <p className="flex items-center gap-1">
-                        <VideoCamera size={12} />
-                        Đã tải video
-                      </p>
-                    )}
-                  </div>
+                  <p className="text-xs text-text-muted">{formatDate(session.created_at)}</p>
                 </Link>
               </motion.div>
             ))}

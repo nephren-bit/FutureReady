@@ -218,8 +218,10 @@ def load_rules(profile: ContextProfile) -> list[EventRule]:
     Build every rule declared in a profile, in `event_catalog` order.
 
     A profile with no calibrated thresholds yields an empty list — the
-    correct behaviour for `presentation_solo` and `interview_solo` in this
-    milestone, and for any fourth profile dropped in later.
+    correct behaviour for `interview_solo` in this milestone (`presentation_solo`
+    now carries thresholds too, borrowed from `presentation_class` as a starting
+    point — see `config/profiles/presentation_solo.yaml`), and for any fourth
+    profile dropped in later.
 
     Raises:
         SpeculativeLabelError: If any label template interprets a cause.

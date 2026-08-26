@@ -1,19 +1,23 @@
 # Hồ sơ bối cảnh: cá nhân tự luyện thuyết trình trước webcam.
 #
-# ĐỢT NÀY CHỈ KHAI BÁO CẤU TRÚC, CHƯA ĐIỀN NGƯỠNG.
+# NGƯỠNG DƯỚI ĐÂY LÀ ĐIỂM KHỞI ĐẦU, CHƯA PHẢI HIỆU CHỈNH THẬT.
 #
-# `events` để rỗng là có chủ ý, không phải thiếu sót: chưa hiệu chỉnh ngưỡng
-# cho bối cảnh ngồi trước laptop thì thà không sinh sự kiện nào còn hơn sinh
-# sự kiện sai. Bộ dò sự kiện chạy với hồ sơ này trả về danh sách rỗng và ghi
-# một dòng log, không ném lỗi.
+# Toàn bộ khối `events` chuyển nguyên từ `presentation_class.yaml` (hồ sơ lớp
+# học cũ, đã hiệu chỉnh trên bối cảnh đứng xa camera) — dùng tạm vì cùng bộ
+# chỉ số/sự kiện, đỡ phải bắt đầu từ số 0. Đây KHÔNG phải ngưỡng đã kiểm
+# chứng cho bối cảnh ngồi gần webcam; Task 9 (đo độ chính xác trên 10 bản ghi
+# `presentation_solo` thật, dùng `PeerNote` làm dữ liệu đối chứng) bắt buộc
+# phải chạy trước khi tin số liệu này. Tăng `version` sau khi hiệu chỉnh lại.
 #
-# Khác biệt đã biết so với presentation_class, sẽ xử lý ở đợt sau:
+# Khác biệt đã biết so với presentation_class, cần theo dõi khi hiệu chỉnh:
 # người dùng thường ngồi và khung hình cắt ngang ngực, nên nhóm `hips` thường
 # không nhìn thấy — các chỉ số dựa trên hông sẽ trả về `không đo được`, đúng
-# như thiết kế, chứ không trả về 0.
+# như thiết kế (xem `analyzers/landmark_availability.py`), chứ không trả về 0.
+# Ngưỡng thời lượng tối thiểu (`min_duration_sec`) copy nguyên từ bối cảnh
+# đứng xa nên nhiều khả năng cần điều chỉnh khi có dữ liệu ngồi gần thật.
 
 profile: presentation_solo
-version: "0.0.0"
+version: "0.1.0"
 description: >-
   Người dùng tự ghi trước webcam. Camera gần, khung hình thường cắt ngang ngực.
 
@@ -31,6 +35,9 @@ metrics:
     required_landmark_groups: [head, shoulders]
     params:
       head_up_margin_ratio: 0.35
+      # Phương án dự phòng khi Pose không đo được: chỉ dùng head pose của Face
+      # Mesh khi phát hiện được mặt rõ trong ít nhất tỷ lệ khung hình này.
+      facemesh_fallback_min_faces_ratio: 0.6
 
   postural_sway:
     unit: "lần rộng vai"
@@ -67,7 +74,7 @@ metrics:
     params:
       turned_width_ratio: 0.62
 
-# Danh mục sự kiện đã khai báo. Ngưỡng để đợt sau.
+# Danh mục sự kiện đã khai báo.
 event_catalog:
   - E_HEAD_DOWN
   - E_STATIC
@@ -76,4 +83,105 @@ event_catalog:
   - E_CLOSED_POSTURE
   - E_STABLE_SEGMENT
 
-events: {}
+# ---------------------------------------------------------------------------
+# Bộ ngưỡng — chuyển nguyên từ presentation_class, CHƯA hiệu chỉnh cho bối
+# cảnh ngồi gần webcam. Xem ghi chú đầu file.
+# ---------------------------------------------------------------------------
+events:
+  E_HEAD_DOWN:
+    requires_metrics: [head_up_ratio]
+    conditions:
+      - signal: head_up
+        comparison: below
+        threshold: 0.5
+    min_duration_sec: 4.0
+    merge_gap_sec: 2.0
+    report:
+      value: duration
+      unit: "giây"
+    label_template: "Cúi mặt liên tục {duration} giây"
+
+  E_STATIC:
+    requires_metrics: [postural_sway, movement_range]
+    conditions:
+      - signal: motion_rate
+        comparison: at_most
+        threshold: 0.04
+    min_duration_sec: 25.0
+    merge_gap_sec: 2.0
+    report:
+      value: mean:motion_rate
+      unit: "lần rộng vai/giây"
+    label_template: "Không dịch chuyển trong {duration} giây (dịch chuyển trung bình {value} lần rộng vai mỗi giây)"
+
+  E_PACING:
+    requires_metrics: [movement_range]
+    conditions:
+      - signal: horizontal_rate
+        comparison: at_least
+        threshold: 0.55
+    min_duration_sec: 8.0
+    merge_gap_sec: 2.0
+    report:
+      value: mean:horizontal_rate
+      unit: "lần rộng vai/giây"
+    label_template: "Di chuyển ngang trung bình {value} lần rộng vai mỗi giây, kéo dài {duration} giây"
+
+  E_TURNED_AWAY:
+    requires_metrics: [turned_away_ratio]
+    conditions:
+      - signal: turned_away
+        comparison: at_least
+        threshold: 0.5
+    min_duration_sec: 5.0
+    merge_gap_sec: 2.0
+    report:
+      value: min:shoulder_width_ratio
+      unit: "lần mức tham chiếu"
+    label_template: "Quay người khỏi hướng khán giả {duration} giây (chiều rộng vai còn {value} lần mức tham chiếu)"
+
+  E_CLOSED_POSTURE:
+    requires_metrics: [closed_posture_ratio]
+    conditions:
+      - signal: closed_posture
+        comparison: at_least
+        threshold: 0.5
+    min_duration_sec: 12.0
+    merge_gap_sec: 2.0
+    report:
+      value: duration
+      unit: "giây"
+    label_template: "Khoanh tay hoặc tay để thấp liên tục {duration} giây"
+
+  # Nhóm tích cực. Đây là VẮNG MẶT điểm yếu, không phải phát hiện điểm mạnh —
+  # không đặt tên là "điểm mạnh" ở bất kỳ đâu trong giao diện lẫn tài liệu.
+  E_STABLE_SEGMENT:
+    requires_metrics:
+      - head_up_ratio
+      - postural_sway
+      - movement_range
+      - closed_posture_ratio
+      - shoulder_tilt
+      - turned_away_ratio
+    conditions:
+      - signal: head_up
+        comparison: at_least
+        threshold: 0.5
+      - signal: turned_away
+        comparison: below
+        threshold: 0.5
+      - signal: closed_posture
+        comparison: below
+        threshold: 0.5
+      - signal: motion_rate
+        comparison: at_most
+        threshold: 0.45
+      - signal: shoulder_tilt_deg
+        comparison: at_most
+        threshold: 9.0
+    min_duration_sec: 20.0
+    merge_gap_sec: 2.0
+    report:
+      value: duration
+      unit: "giây"
+    label_template: "Đoạn {duration} giây mọi chỉ số nằm trong dải tốt"

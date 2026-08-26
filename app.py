@@ -1,17 +1,21 @@
 """
 app.py
 
-FastAPI application entry point for FutureReady (EmpathAI).
+FastAPI application entry point for FutureReady.
 
-Wires together the Session API (the primary, session-centric interface),
-the Live Practice API (standalone, audio-only WebSocket streaming), and
-the legacy stateless routers (extract/analyze/evaluate — kept in parallel,
-marked deprecated per the migration plan; the standalone Audio API was
-removed entirely since audio is now only ever analyzed as part of a
-session's video upload). Also configures CORS, exposes a health-check
-endpoint, and validates configuration on startup. Run with:
+Wires together the Self Practice API (specs/in-class-analysis) -- the
+product's sole entry point: record a practice video, get back measured
+body-movement events on a timeline. It never computes a total score.
+
+Also configures CORS, exposes a health-check endpoint, and ensures the
+upload directory exists on startup. Run with:
 
     uvicorn app:app --reload
+
+(This module used to also wire up the Session API, Live Practice, and three
+legacy stateless routers for a larger upload-and-score evaluation pipeline
+-- removed along with that pipeline. See git history before the removal
+commit if any of that is needed again.)
 """
 
 from __future__ import annotations
@@ -22,8 +26,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
-from providers.registry import provider_registry
-from routers import analyze, evaluate, extract, practice, sessions
+from routers import self_practice
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -31,16 +34,10 @@ logger = get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan handler: validate config on startup."""
+    """Application lifespan handler: ensure the upload directory exists on startup."""
     logger.info("Starting FutureReady API...")
-    settings.validate()
-    engine = provider_registry.get_reasoning_engine()
-    logger.info(
-        "Configuration validated. Reasoning engine: %s (%s) | Whisper model: %s",
-        engine.name,
-        engine.version,
-        settings.WHISPER_MODEL_SIZE,
-    )
+    settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    logger.info("Upload directory ready: %s", settings.UPLOAD_DIR)
     yield
     logger.info("Shutting down FutureReady API...")
 
@@ -48,20 +45,13 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="FutureReady API",
     description=(
-        "AI-powered communication coaching platform. Evaluates resumes, "
-        "presentation slides, and recorded speech/video using traditional "
-        "AI, computer vision, and deterministic scoring — with Gemini 2.5 "
-        "Flash used only for the final reasoning layer.\n\n"
-        "The Session API (`/sessions/*`) is the supported way to run an "
-        "evaluation: create a session (Presentation or Interview), upload "
-        "its materials, and poll for progress/results. The Live Practice "
-        "API (`/practice/*`) is a separate, standalone audio-only "
-        "WebSocket streaming feature for quick speaking practice, not part "
-        "of the Session API's state machine. The stateless `/extract`, "
-        "`/analyze`, and `/evaluate` routers are kept for debugging and "
-        "backward compatibility but are deprecated."
+        "Self-practice presentation/interview coaching (specs/in-class-analysis). "
+        "Record a practice video, and the pipeline measures body-movement metrics "
+        "(head position, posture, gesture rate, ...) via MediaPipe Pose and reports "
+        "detected moments on a timeline -- it never computes a total score, and it "
+        "never invents a diagnosis for what it measured."
     ),
-    version="3.0.0",
+    version="4.0.0",
     lifespan=lifespan,
 )
 
@@ -74,19 +64,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Primary interface: session-centric evaluation workflow.
-app.include_router(sessions.router)
-
-# Live Practice: standalone, audio-only WebSocket streaming practice
-# (see routers/practice.py) -- not part of the Session API state machine.
-app.include_router(practice.router)
-
-# Legacy stateless routers — kept in parallel, deprecated. No standalone
-# Audio API exists anymore; audio is only ever analyzed as part of a
-# session's video upload (see services/workflow_manager.py).
-app.include_router(extract.router, deprecated=True)
-app.include_router(analyze.router, deprecated=True)
-app.include_router(evaluate.router, deprecated=True)
+app.include_router(self_practice.router)
 
 
 @app.get("/health", tags=["Health"], summary="Health check")

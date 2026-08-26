@@ -42,8 +42,9 @@ function Hero() {
             transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
             className="mt-5 text-lg md:text-xl text-text-secondary-dark leading-relaxed max-w-xl"
           >
-            Phân tích AI-powered cho CV, slide và bài thuyết trình của bạn.
-            Nhận phản hồi có thể hành động trước thời khắc thực sự.
+            Ghi lại buổi thuyết trình hoặc phỏng vấn tự luyện trước webcam.
+            Xem lại từng khoảnh khắc máy đo được trên dòng thời gian --
+            không chấm điểm, không so sánh với ai khác.
           </motion.p>
 
           <motion.div
@@ -52,10 +53,10 @@ function Hero() {
             className="mt-8 flex flex-wrap items-center gap-4"
           >
             <Link
-              to="/app/new"
+              to="/app/luyen-tap"
               className="inline-flex items-center gap-2.5 bg-accent hover:bg-accent-hover text-white font-medium px-6 py-3 rounded-lg transition-colors duration-200"
             >
-              Bắt đầu đánh giá
+              Bắt đầu tự luyện
               <ArrowRight className="w-4 h-4" weight="bold" />
             </Link>
             <Link
@@ -71,7 +72,7 @@ function Hero() {
             transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
             className="mt-10 flex flex-wrap gap-3"
           >
-            {['6 lớp AI', '30+ trạng thái', 'Phân tích thời gian thực'].map(
+            {['MediaPipe Pose', '7 chỉ số chuyển động', 'Không chấm điểm'].map(
               (stat) => (
                 <span
                   key={stat}
@@ -96,24 +97,24 @@ function HowItWorks() {
   const steps = [
     {
       number: '01',
-      icon: FileText,
-      title: 'Tải lên',
+      icon: VideoCamera,
+      title: 'Ghi hình',
       description:
-        'Tải lên CV, slide hoặc video đã ghi lại thông qua giao diện kéo thả đơn giản.',
+        'Chọn hồ sơ thuyết trình hoặc phỏng vấn, rồi ghi lại buổi tự luyện ngay trước webcam.',
     },
     {
       number: '02',
       icon: ChartBar,
-      title: 'Phân tích',
+      title: 'Đo lường',
       description:
-        'Một pipeline AI 6 lớp xử lý từng tài liệu, trích xuất tín hiệu trên nhiều chiều.',
+        'MediaPipe Pose đo bảy chỉ số chuyển động cơ thể theo từng khung hình -- không suy đoán, chỉ đo.',
     },
     {
       number: '03',
-      icon: VideoCamera,
-      title: 'Cải thiện',
+      icon: FileText,
+      title: 'Xem lại',
       description:
-        'Nhận phản hồi có điểm số cùng các mẹo có thể hành động để áp dụng trước buổi phỏng vấn hoặc bài thuyết trình tiếp theo.',
+        'Xem dòng thời gian các khoảnh khắc máy phát hiện được, tự ghi chú tại bất kỳ điểm nào bạn muốn nhớ.',
     },
   ]
 
@@ -173,31 +174,31 @@ function HowItWorks() {
 function FeaturesGrid() {
   const features = [
     {
-      icon: FileText,
-      title: 'Phân tích CV',
+      icon: ChartBar,
+      title: 'Chỉ số chuyển động cơ thể',
       description:
-        'Chấm điểm mật độ từ khóa, phát hiện động từ hành động, và đánh giá độ hoàn thiện các phần theo tiêu chuẩn ngành.',
+        'Tỷ lệ ngẩng đầu, độ lắc lư tư thế, tần suất cử chỉ tay, độ nghiêng vai... đo bằng MediaPipe Pose. Không đo được thì báo lý do, không bao giờ trả về số 0 giả.',
       tint: 'bg-accent/[0.04]',
     },
     {
-      icon: ChartBar,
-      title: 'Trí tuệ Slide',
+      icon: VideoCamera,
+      title: 'Sự kiện phát hiện được',
       description:
-        'Mật độ văn bản trên mỗi slide, đánh giá độ phong phú hình ảnh, và chấm điểm sự nhất quán trên toàn bộ bài thuyết trình.',
+        'Cúi đầu kéo dài, đứng yên quá lâu, quay người khỏi camera, khoanh tay... Nhãn chỉ mô tả cái đo được, không bao giờ suy đoán nguyên nhân.',
       tint: 'bg-transparent',
     },
     {
-      icon: VideoCamera,
-      title: 'Giọng nói & Cách trình bày',
+      icon: FileText,
+      title: 'Dòng thời gian xem lại',
       description:
-        'Số từ mỗi phút, theo dõi từ đệm, phân tích độ đa dạng từ vựng, và ước tính trình độ CEFR.',
+        'Video kèm dải mốc sự kiện ngay dưới thanh tiến trình -- bấm vào bất kỳ mốc nào để nhảy thẳng tới khoảnh khắc đó.',
       tint: 'bg-transparent',
     },
     {
       icon: Sparkle,
-      title: 'Cảm xúc & Ngôn ngữ cơ thể',
+      title: 'Tự ghi chú',
       description:
-        'Dòng thời gian cảm xúc khuôn mặt, đo tỷ lệ giao tiếp bằng mắt, và chấm điểm sự ổn định đầu trong suốt bài trình bày.',
+        'Thêm ghi chú tại bất kỳ điểm nào trong lúc xem lại, sửa hoặc xoá tự do -- chỉ bạn mới thấy được ghi chú của chính mình.',
       tint: 'bg-accent/[0.04]',
     },
   ]
@@ -254,12 +255,11 @@ function FeaturesGrid() {
 
 function PipelineVisualization() {
   const layers = [
-    'Trích xuất',
-    'Phân tích',
-    'Kết hợp',
-    'Chấm điểm',
-    'Prompt',
-    'Suy luận',
+    'Ghi hình',
+    'Trích khung hình',
+    'Đo tư thế (Pose)',
+    'Phát hiện sự kiện',
+    'Xem lại & ghi chú',
   ]
 
   return (
@@ -284,7 +284,7 @@ function PipelineVisualization() {
             transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
             className="mt-3 text-text-secondary-dark max-w-md mx-auto"
           >
-            Một pipeline 6 lớp chuyển đổi từ đầu vào thô thành insight có cấu trúc, có thể hành động.
+            Một pipeline đo lường xác định, từ video thô tới dòng thời gian sự kiện -- không có bước chấm điểm nào.
           </motion.p>
 
           <motion.div
@@ -345,7 +345,7 @@ function CTASection() {
             className="mt-8"
           >
             <Link
-              to="/app/new"
+              to="/app/luyen-tap"
               className="inline-flex items-center gap-2.5 bg-accent hover:bg-accent-hover text-white font-medium px-7 py-3.5 rounded-lg transition-colors duration-200"
             >
               Bắt đầu miễn phí
@@ -369,7 +369,7 @@ function LandingFooter() {
           </span>
         </div>
         <p className="text-sm text-text-secondary-dark">
-          Đào tạo giao tiếp AI-powered.
+          Tự luyện thuyết trình &amp; phỏng vấn, không chấm điểm.
         </p>
         <p className="text-xs text-text-secondary-dark/60">
           &copy; 2024 EmpathAI

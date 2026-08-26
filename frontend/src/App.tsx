@@ -3,10 +3,8 @@ import Navbar from './components/layout/Navbar'
 import Footer from './components/layout/Footer'
 import Landing from './pages/Landing'
 import Dashboard from './pages/Dashboard'
-import NewSession from './pages/NewSession'
-import SessionDetail from './pages/SessionDetail'
-import Report from './pages/Report'
-import Practice from './pages/Practice'
+import SelfPractice from './pages/SelfPractice'
+import SessionReview from './pages/SessionReview'
 
 export default function App() {
   return (
@@ -22,10 +20,8 @@ export default function App() {
                 <main className="flex-1">
                   <Routes>
                     <Route index element={<Dashboard />} />
-                    <Route path="new" element={<NewSession />} />
-                    <Route path="practice" element={<Practice />} />
-                    <Route path="sessions/:id" element={<SessionDetail />} />
-                    <Route path="sessions/:id/report" element={<Report />} />
+                    <Route path="luyen-tap" element={<SelfPractice />} />
+                    <Route path="phien/:id" element={<SessionReview />} />
                   </Routes>
                 </main>
                 <Footer />

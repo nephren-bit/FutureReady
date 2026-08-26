@@ -20,7 +20,7 @@ from analyzers.pose_analyzer import LandmarkFrame, PoseAnalyzer, apply_head_pose
 from events.detector import EventDetector
 from events.rules import SpeculativeLabelError, assert_descriptive, format_number
 from models.features import FaceMeshFeature, PoseFeature, PoseFrameSample, PoseMetric
-from models.notes import NoteVisibility, TeacherNote
+from models.notes import SelfNote
 from models.profiles import ContextProfile, LandmarkGroup
 from services.profile_loader import available_profiles, load_profile
 
@@ -243,9 +243,13 @@ class TestContextProfiles:
     def test_all_three_profiles_load(self) -> None:
         assert {"presentation_class", "presentation_solo", "interview_solo"} <= set(available_profiles())
 
-    def test_only_the_classroom_profile_carries_thresholds(self) -> None:
+    def test_presentation_profiles_carry_thresholds_interview_does_not(self) -> None:
+        # presentation_solo's thresholds are carried over from presentation_class
+        # as a starting point (see config/profiles/presentation_solo.yaml) — not
+        # yet calibrated for the close-webcam context. interview_solo still has
+        # none at all.
         assert load_profile("presentation_class").events
-        assert load_profile("presentation_solo").events == {}
+        assert load_profile("presentation_solo").events
         assert load_profile("interview_solo").events == {}
 
     def test_an_empty_fourth_profile_does_not_break_anything(self) -> None:
@@ -450,34 +454,26 @@ class TestHeadPoseFallback:
         assert pose.head_up_ratio.measured is False
 
 
-class TestTeacherNote:
-    """Task 4: notes are a separate model, private by default, originals immutable."""
+class TestSelfNote:
+    """Task 4: SelfNote edits in place, carries no ground-truth machinery."""
 
-    def test_a_live_mark_starts_empty_private_and_counts_as_ground_truth(self) -> None:
-        note = TeacherNote(session_id="s1", mark_sec=42.0, created_during_recording=True)
+    def test_a_note_starts_with_no_ground_truth_machinery(self) -> None:
+        note = SelfNote(session_id="s1", mark_sec=12.0)
         assert note.text == ""
-        assert note.category is None
-        assert note.visibility is NoteVisibility.PRIVATE
-        assert note.is_ground_truth is True
+        assert not hasattr(note, "visibility")
+        assert not hasattr(note, "created_during_recording")
 
-    def test_editing_creates_a_revision_and_leaves_the_original_untouched(self) -> None:
-        original = TeacherNote(session_id="s1", mark_sec=42.0, created_during_recording=True)
-        revision = original.revise(text="mở bài chưa nêu vấn đề")
+    def test_editing_updates_the_same_note_instead_of_revising(self) -> None:
+        original = SelfNote(session_id="s1", mark_sec=12.0, text="ban dau")
+        edited = original.edited(text="da sua")
 
-        assert original.text == ""
-        assert revision.text == "mở bài chưa nêu vấn đề"
-        assert revision.revision_of == original.note_id
-        assert revision.note_id != original.note_id
-        assert revision.mark_sec == original.mark_sec
+        assert edited.note_id == original.note_id  # same row, not a new one
+        assert edited.text == "da sua"
+        assert edited.mark_sec == original.mark_sec
+        assert edited.updated_at >= original.updated_at
 
-    def test_a_revision_is_never_ground_truth(self) -> None:
-        original = TeacherNote(session_id="s1", mark_sec=42.0, created_during_recording=True)
-        revision = original.revise(text="thêm sau khi xem kết quả máy")
-        assert revision.is_ground_truth is False
-        assert revision.is_original is False
-
-    def test_sharing_is_per_note_and_explicit(self) -> None:
-        original = TeacherNote(session_id="s1", mark_sec=10.0, created_during_recording=True)
-        shared = original.revise(visibility=NoteVisibility.SHARED_WITH_STUDENT)
-        assert original.visibility is NoteVisibility.PRIVATE
-        assert shared.visibility is NoteVisibility.SHARED_WITH_STUDENT
+    def test_editing_only_the_given_fields_leaves_the_rest_alone(self) -> None:
+        original = SelfNote(session_id="s1", mark_sec=12.0, text="ghi chu")
+        moved = original.edited(mark_sec=20.0)
+        assert moved.mark_sec == 20.0
+        assert moved.text == "ghi chu"
