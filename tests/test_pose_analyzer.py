@@ -190,6 +190,18 @@ class TestPoseMetrics:
         feature = PoseAnalyzer().analyze_landmarks(frames)
         assert feature.gesture_rate.value == pytest.approx(2.0, abs=1e-6)
 
+    def test_postural_sway_dev_signal_is_gated_by_hips_like_its_aggregate(self) -> None:
+        """`postural_sway_dev` (per-frame) backs `E_POSTURAL_SWAY_SPIKE`, the
+        same way `postural_sway` (whole-video RMS) backs its own metric card --
+        both need the hips landmark group, so both go missing together."""
+        with_hips = PoseAnalyzer().analyze_landmarks(standing_clip(3))
+        assert "postural_sway_dev" in with_hips.series[0].signals
+
+        without_hips = PoseAnalyzer().analyze_landmarks(
+            standing_clip(3, hips_visible=False, arms_visible=False)
+        )
+        assert "postural_sway_dev" not in without_hips.series[0].signals
+
 
 class TestCameraDistanceInvariance:
     """Task 3's acceptance check: same movement, two camera distances, same numbers."""
@@ -397,6 +409,105 @@ class TestEventDetector:
         bad = [dict(NEUTRAL, shoulder_tilt_deg=25.0) for _ in range(40)]
         assert [e for e in EventDetector().detect("s1", pose_with(series_from(bad)))
                 if e.type == "E_STABLE_SEGMENT"] == []
+
+
+class TestEdgeTrigger:
+    """
+    `trigger: edge` (models/profiles.py, events/detector.py) reports one
+    zero-duration point per occurrence, instead of a sustained run -- for
+    something that IS the event by happening at all (a gesture, the head
+    coming back up), not by lasting.
+    """
+
+    @staticmethod
+    def _edge_profile(merge_gap_sec: float = 2.0) -> ContextProfile:
+        spec = EventRuleSpec(
+            conditions=[dict(signal="active", comparison="at_least", threshold=1.0)],
+            trigger="edge",
+            merge_gap_sec=merge_gap_sec,
+            report=RuleReport(value="frame", unit="khung hình"),
+            label_template="Sự kiện (khung hình {value})",
+        )
+        return ContextProfile(profile="x", event_catalog=["E_TEST"], events={"E_TEST": spec})
+
+    def test_one_zero_duration_point_per_rising_edge(self) -> None:
+        frames = [{"active": 0.0} for _ in range(20)]
+        for i in (3, 4, 5):  # one continuous occurrence
+            frames[i]["active"] = 1.0
+        frames[15]["active"] = 1.0  # a second, separate occurrence
+        pose = pose_with(series_from(frames))
+        events = EventDetector(self._edge_profile()).detect("s1", pose)
+
+        assert len(events) == 2
+        assert all(event.duration_sec == 0.0 for event in events)
+        assert [event.start_sec for event in events] == [3.0, 15.0]
+
+    def test_a_one_frame_flicker_does_not_double_count(self) -> None:
+        frames = [{"active": 0.0} for _ in range(20)]
+        frames[3]["active"] = 1.0
+        # Drops out for exactly one sample, back on 2 seconds after the first
+        # edge -- within merge_gap_sec, so it must read as one occurrence,
+        # not a second gesture.
+        frames[5]["active"] = 1.0
+        pose = pose_with(series_from(frames))
+        events = EventDetector(self._edge_profile(merge_gap_sec=2.0)).detect("s1", pose)
+        assert len(events) == 1
+
+    def test_edge_rule_rejects_a_nonzero_min_duration(self) -> None:
+        """An edge rule's events are always zero-duration -- a nonzero
+        min_duration_sec would just silently drop every one of them."""
+        with pytest.raises(ValueError):
+            EventRuleSpec(trigger="edge", min_duration_sec=1.0)
+
+
+class TestPresentationSoloCountEvents:
+    """
+    E_GESTURE / E_HEAD_UP / E_POSTURAL_SWAY_SPIKE (config/profiles/
+    presentation_solo.yaml) -- new, provisional thresholds added alongside
+    `trigger: edge` so the detected-events panel can say "ngẩng đầu lên 1
+    lần" instead of only a whole-video ratio. E_POSTURAL_SWAY_SPIKE stays
+    `trigger: sustained` on purpose: the ask was "lắc lư TRONG BAO NHIÊU
+    GIÂY", a duration, not a count.
+    """
+
+    @staticmethod
+    def _pose(frames: list[dict[str, float]]) -> PoseFeature:
+        pose = pose_with(series_from(frames))
+        pose.profile = "presentation_solo"
+        return pose
+
+    def test_head_up_moment_is_reported_once_per_recovery(self) -> None:
+        frames = [dict(NEUTRAL, head_up=0.0) for _ in range(20)]
+        for i in (8, 9, 10):  # head comes up for 3 frames, one recovery
+            frames[i]["head_up"] = 1.0
+        events = [
+            e for e in EventDetector("presentation_solo").detect("s1", self._pose(frames))
+            if e.type == "E_HEAD_UP"
+        ]
+        assert len(events) == 1
+        assert events[0].duration_sec == 0.0
+
+    def test_gesture_is_counted_once_per_occurrence(self) -> None:
+        frames = [dict(NEUTRAL, gesture_active=0.0) for _ in range(30)]
+        for i in (3, 4):  # first gesture
+            frames[i]["gesture_active"] = 1.0
+        frames[20]["gesture_active"] = 1.0  # a second, separate gesture
+        events = [
+            e for e in EventDetector("presentation_solo").detect("s1", self._pose(frames))
+            if e.type == "E_GESTURE"
+        ]
+        assert len(events) == 2
+
+    def test_postural_sway_spike_still_reports_a_duration_not_a_count(self) -> None:
+        frames = [dict(NEUTRAL, postural_sway_dev=0.0) for _ in range(20)]
+        for i in range(5, 10):  # 4 seconds above the sway threshold
+            frames[i]["postural_sway_dev"] = 0.8
+        events = [
+            e for e in EventDetector("presentation_solo").detect("s1", self._pose(frames))
+            if e.type == "E_POSTURAL_SWAY_SPIKE"
+        ]
+        assert len(events) == 1
+        assert events[0].duration_sec == pytest.approx(4.0)
 
 
 class TestFrameReporting:

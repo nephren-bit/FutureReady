@@ -94,6 +94,12 @@ SIGNAL_SHOULDER_WIDTH_RATIO = "shoulder_width_ratio"
 SIGNAL_CLOSED_POSTURE = "closed_posture"
 SIGNAL_GESTURE_ACTIVE = "gesture_active"
 SIGNAL_SHOULDER_TILT = "shoulder_tilt_deg"
+# Distance of this frame's hip centre from the recording's own mean hip
+# centre, in shoulder widths -- the per-frame counterpart of the
+# `postural_sway` aggregate (which is the RMS of exactly this value across
+# every frame). Lets `events/rules.py` flag *when* someone swayed away from
+# their settled position, not just report one number for the whole video.
+SIGNAL_POSTURAL_SWAY_DEV = "postural_sway_dev"
 
 # Which metric each signal belongs to. A signal is only emitted when its
 # backing metric is measurable, so the landmark requirements declared once in
@@ -107,6 +113,7 @@ SIGNAL_METRIC: dict[str, str] = {
     SIGNAL_CLOSED_POSTURE: "closed_posture_ratio",
     SIGNAL_GESTURE_ACTIVE: "gesture_rate",
     SIGNAL_SHOULDER_TILT: "shoulder_tilt",
+    SIGNAL_POSTURAL_SWAY_DEV: "postural_sway",
 }
 
 # Percentile of observed shoulder widths taken as "facing the camera square
@@ -278,7 +285,8 @@ class PoseAnalyzer(BaseAnalyzer[list[tuple[np.ndarray, float]], PoseFeature]):
         reference_width = self._facing_reference_width(geometries)
 
         metrics = self._compute_metrics(geometries, availability, reference_width, frames)
-        series = self._build_series(frames, per_frame, availability, reference_width)
+        mean_hip_center = self._mean_hip_center(geometries)
+        series = self._build_series(frames, per_frame, availability, reference_width, mean_hip_center)
 
         sampling_rate = self._sampling_rate_hz(frames)
         minimum_rate = self._profile.frame_requirements.min_sample_rate_hz
@@ -683,6 +691,7 @@ class PoseAnalyzer(BaseAnalyzer[list[tuple[np.ndarray, float]], PoseFeature]):
         per_frame: list[_FrameGeometry | None],
         availability: AvailabilityReport,
         reference_width: float | None,
+        mean_hip_center: tuple[float, float] | None,
     ) -> list[PoseFrameSample]:
         """
         Build the per-frame time series `events/detector.py` runs its rules
@@ -695,6 +704,9 @@ class PoseAnalyzer(BaseAnalyzer[list[tuple[np.ndarray, float]], PoseFeature]):
             frames: The sampled frames.
             per_frame: Geometry index-aligned with `frames`, `None` where the
                 frame yielded none.
+            mean_hip_center: The recording's own mean hip centre, from
+                `_mean_hip_center` -- what `SIGNAL_POSTURAL_SWAY_DEV` measures
+                each frame's distance from.
         """
         allowed = {
             signal
@@ -709,7 +721,7 @@ class PoseAnalyzer(BaseAnalyzer[list[tuple[np.ndarray, float]], PoseFeature]):
             signals: dict[str, float] = {}
 
             if geo is not None:
-                self._write_static_signals(signals, geo, allowed, reference_width)
+                self._write_static_signals(signals, geo, allowed, reference_width, mean_hip_center)
                 self._write_rate_signals(signals, geo, previous, allowed)
                 previous = geo
             else:
@@ -734,6 +746,7 @@ class PoseAnalyzer(BaseAnalyzer[list[tuple[np.ndarray, float]], PoseFeature]):
         geo: _FrameGeometry,
         allowed: set[str],
         reference_width: float | None,
+        mean_hip_center: tuple[float, float] | None,
     ) -> None:
         """Signals derived from a single frame in isolation."""
         if SIGNAL_HEAD_UP in allowed and geo.head_elevation_ratio is not None:
@@ -760,6 +773,15 @@ class PoseAnalyzer(BaseAnalyzer[list[tuple[np.ndarray, float]], PoseFeature]):
             active = self._gesture_active(geo)
             if active is not None:
                 signals[SIGNAL_GESTURE_ACTIVE] = 1.0 if active else 0.0
+
+        if (
+            SIGNAL_POSTURAL_SWAY_DEV in allowed
+            and geo.hip_center_px is not None
+            and mean_hip_center is not None
+            and geo.shoulder_width_px > 0
+        ):
+            deviation = math.dist(geo.hip_center_px, mean_hip_center) / geo.shoulder_width_px
+            signals[SIGNAL_POSTURAL_SWAY_DEV] = round(deviation, _ROUND_DECIMALS)
 
     def _write_rate_signals(
         self,
@@ -844,6 +866,19 @@ class PoseAnalyzer(BaseAnalyzer[list[tuple[np.ndarray, float]], PoseFeature]):
         if not widths:
             return None
         return statistics.median(widths)
+
+    @staticmethod
+    def _mean_hip_center(geometries: list[_FrameGeometry]) -> tuple[float, float] | None:
+        """
+        The recording's own mean hip centre — the point `_postural_sway`
+        measures RMS wander around for the whole-video aggregate, and what
+        `SIGNAL_POSTURAL_SWAY_DEV` measures each individual frame's distance
+        from for `E_POSTURAL_SWAY_SPIKE`.
+        """
+        centers = [geo.hip_center_px for geo in geometries if geo.hip_center_px is not None]
+        if not centers:
+            return None
+        return (statistics.fmean(c[0] for c in centers), statistics.fmean(c[1] for c in centers))
 
     @staticmethod
     def _facing_reference_width(geometries: list[_FrameGeometry]) -> float | None:

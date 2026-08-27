@@ -4,7 +4,8 @@ events/detector.py
 Turns the per-frame time series on a `PoseFeature` into a list of discrete,
 timestamped `PresentationEvent`s a reviewer can click and jump to.
 
-The same six steps run for every rule, whatever it measures:
+The same six steps run for every `trigger: sustained` rule (the default),
+whatever it measures:
 
 1. **Measure each frame** — already done; `PoseFeature.series` carries it.
 2. **Compare against the threshold** — every condition of the rule must hold
@@ -18,6 +19,16 @@ Steps 4 and 5 are in that order on purpose: filtering before merging means
 two brief runs never add up into an event neither of them earned. That is
 the "rather miss it than call it wrongly" bias, applied at the one place it
 is cheapest to apply.
+
+A `trigger: edge` rule (`models.profiles.EventRuleSpec.trigger`) runs a
+different steps 3-5: instead of a sustained run, it reports one
+zero-duration point per *rising edge* -- the frame a rule starts matching
+after not matching (or the first frame, if it already matches). A gesture
+or "the head came back up" is the event by happening at all, not by
+lasting, so counting how many times it happened (a point per occurrence)
+is the honest report, not a duration nobody asked for. `min_duration_sec`
+does not apply (see the model validator); `merge_gap_sec` still collapses
+a one-frame flicker into a single occurrence.
 
 A rule is skipped entirely when any metric it declares came back not
 measured. Not "treated as zero" — skipped. The reviewer sees the metric
@@ -106,10 +117,49 @@ class EventDetector:
         self, session_id: str, rule: EventRule, series: list[PoseFrameSample], source_fps: float
     ) -> list[PresentationEvent]:
         """Run one rule end to end over the time series."""
+        if rule.spec.trigger == "edge":
+            points = self._rising_edges(rule, series)                         # steps 2-3, edge style
+            occurrences = self._dedupe_close_points(points, rule.spec.merge_gap_sec)  # step 5 analogue
+            return [self._to_event(session_id, rule, point, source_fps) for point in occurrences]  # step 6
+
         runs = self._consecutive_runs(rule, series)                       # steps 2-3
         long_enough = [run for run in runs if run.duration_sec >= rule.spec.min_duration_sec]  # step 4
         merged = self._merge_close(long_enough, rule.spec.merge_gap_sec)  # step 5
         return [self._to_event(session_id, rule, segment, source_fps) for segment in merged]  # step 6
+
+    @staticmethod
+    def _rising_edges(rule: EventRule, series: list[PoseFrameSample]) -> list[Segment]:
+        """
+        `trigger: edge` steps 2-3: one zero-duration point per rising edge,
+        instead of a sustained run -- see the module docstring.
+        """
+        edges: list[Segment] = []
+        was_matching = False
+        for sample in series:
+            matching = rule.matches(sample)
+            if matching and not was_matching:
+                edges.append(Segment(start_sec=sample.timestamp_sec, end_sec=sample.timestamp_sec, samples=(sample,)))
+            was_matching = matching
+        return edges
+
+    @staticmethod
+    def _dedupe_close_points(points: list[Segment], gap_sec: float) -> list[Segment]:
+        """
+        `trigger: edge`'s analogue of step 5: collapse an edge within
+        `gap_sec` of the last *kept* one into the same occurrence, so a
+        one-frame dropout mid-gesture doesn't double-count it. Unlike
+        `_merge_close`, the kept point keeps its own zero duration rather
+        than stretching to span both edges -- a point event's whole point is
+        that it never describes a range.
+        """
+        if not points:
+            return []
+        ordered = sorted(points, key=lambda point: point.start_sec)
+        kept = [ordered[0]]
+        for point in ordered[1:]:
+            if point.start_sec - kept[-1].start_sec > gap_sec:
+                kept.append(point)
+        return kept
 
     @staticmethod
     def _consecutive_runs(rule: EventRule, series: list[PoseFrameSample]) -> list[Segment]:

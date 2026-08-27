@@ -23,9 +23,9 @@ import {
   listPeerInvites,
   revokePeerInvite,
 } from '../lib/api'
-import type { SelfPracticeSession, SelfNote, PoseFeature, PoseMetric, PeerReviewInvite } from '../types'
-import { SELF_PRACTICE_METRIC_LABELS, RUBRIC_LABELS } from '../types'
-import VideoTimeline from '../components/VideoTimeline'
+import type { SelfPracticeSession, SelfNote, PeerReviewInvite } from '../types'
+import { RUBRIC_LABELS } from '../types'
+import VideoTimeline, { EVENT_COLORS } from '../components/VideoTimeline'
 import { cn } from '../lib/utils'
 
 const INVITE_STATUS_LABELS: Record<PeerReviewInvite['status'], string> = {
@@ -40,27 +40,6 @@ function inviteStatusColor(status: PeerReviewInvite['status']): string {
   if (status === 'pending') return 'bg-accent-light text-accent'
   return 'bg-surface-elevated text-text-muted'
 }
-
-type PoseMetricName = Exclude<
-  keyof PoseFeature,
-  'profile' | 'profile_version' | 'frames_analyzed' | 'pose_detected_ratio' | 'sampling_rate_hz' | 'sampling_warning' | 'source_fps'
->
-
-// A raw measurement like "0.3227 lần rộng vai" or "3.307 độ" is 4 decimal
-// digits of precision nobody reviewing their own practice needs -- a ratio
-// in [0, 1] reads as a percentage (the most common way to see a fraction);
-// everything else rounds to 1 decimal place, Vietnamese comma style.
-function formatMetricValue(metric: PoseMetric): string {
-  if (metric.value === null) return 'không đo được'
-  if (metric.unit === 'tỷ lệ 0-1') {
-    return `${Math.round(metric.value * 100)}%`
-  }
-  const rounded = Math.round(metric.value * 10) / 10
-  const text = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1).replace('.', ',')
-  return `${text} ${metric.unit}`
-}
-
-const METRIC_NAMES = Object.keys(SELF_PRACTICE_METRIC_LABELS) as PoseMetricName[]
 
 export default function SessionReview() {
   const { id } = useParams<{ id: string }>()
@@ -294,45 +273,28 @@ export default function SessionReview() {
             </div>
           )}
 
-          <div className="grid gap-6 sm:grid-cols-2 mb-6">
-            <div className="rounded-xl border border-border bg-surface p-5">
-              <h3 className="text-sm font-semibold text-text-primary mb-4">Chỉ số đo được</h3>
-              <dl className="space-y-3">
-                {METRIC_NAMES.map(name => {
-                  const metric = session.pose_feature?.[name]
-                  return (
-                    <div key={name} className="flex items-center justify-between text-xs">
-                      <dt className="text-text-secondary">{SELF_PRACTICE_METRIC_LABELS[name]}</dt>
-                      <dd className="text-text-primary font-medium">
-                        {metric?.measured ? formatMetricValue(metric) : 'không đo được'}
-                      </dd>
-                    </div>
-                  )
-                })}
-              </dl>
-            </div>
-
-            <div className="rounded-xl border border-border bg-surface p-5">
-              <h3 className="text-sm font-semibold text-text-primary mb-4">Sự kiện phát hiện được</h3>
-              {session.events.length === 0 ? (
-                <p className="text-xs text-text-muted">Không có sự kiện nào.</p>
-              ) : (
-                <ul className="space-y-2 max-h-64 overflow-y-auto">
-                  {session.events.map(event => (
-                    <li key={event.event_id}>
-                      <button
-                        type="button"
-                        onClick={() => handleSeek(event.start_sec)}
-                        className="w-full text-left text-xs rounded-lg border border-border p-2 hover:bg-surface-elevated"
-                      >
-                        <span className="font-mono text-text-muted">{Math.round(event.start_sec)}s</span>{' '}
-                        <span className="text-text-primary">{event.label}</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+          <div className="rounded-xl border border-border bg-surface p-5 mb-6">
+            <h3 className="text-sm font-semibold text-text-primary mb-4">Sự kiện phát hiện được</h3>
+            {session.events.length === 0 ? (
+              <p className="text-xs text-text-muted">Chưa phát hiện sự kiện nào trong lần ghi này.</p>
+            ) : (
+              <ul className="space-y-2">
+                {session.events.map(event => (
+                  <li key={event.event_id}>
+                    <button
+                      type="button"
+                      onClick={() => handleSeek(event.start_sec)}
+                      className="flex w-full items-center gap-2 rounded-lg border border-border p-2 text-left text-xs hover:bg-surface-elevated"
+                    >
+                      <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', EVENT_COLORS[event.type] ?? 'bg-text-muted')} />
+                      <span className="text-text-primary">
+                        Điểm đánh dấu lúc <span className="font-mono">{Math.round(event.start_sec)}s</span>: {event.label}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
 
           <div className="rounded-xl border border-border bg-surface p-5">

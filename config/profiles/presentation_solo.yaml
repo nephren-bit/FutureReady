@@ -17,17 +17,14 @@
 # đứng xa nên nhiều khả năng cần điều chỉnh khi có dữ liệu ngồi gần thật.
 #
 # Khác một chỗ so với presentation_class: mọi sự kiện ở đây báo khung hình
-# bắt đầu sự kiện (`report.value: frame`) thay vì chỉ báo thời lượng.
-# E_STATIC/E_PACING/E_TURNED_AWAY đổi trước (thay tỷ lệ chuẩn hoá gốc "lần
-# rộng vai mỗi giây", "lần mức tham chiếu" bằng số nguyên dễ định vị hơn).
-# E_HEAD_DOWN/E_CLOSED_POSTURE/E_STABLE_SEGMENT đổi sau, vì lý do khác: nhãn
-# cũ kiểu "Đoạn X giây ... dải tốt" đọc như đang chấm cả một quãng là
-# tốt/xấu, trong khi dải mốc xem lại (VideoTimeline.tsx) chỉ đánh dấu MỘT
-# ĐIỂM — nhãn phải khớp với đó, tức "tại khung hình này, X xảy ra (kéo dài Y
-# giây)", không phải "đoạn này là X". Vẫn giữ nguyên `{duration}` trong nhãn
-# và trong `PresentationEvent.duration_sec` — chỉ đổi cách diễn đạt và neo
-# thêm một mốc bắt đầu, không đổi thuật toán phát hiện hay bỏ dữ liệu thời
-# lượng (bảng theo dõi chất lượng vẫn cần nó).
+# bắt đầu sự kiện (`report.value: frame`) thay vì chỉ báo thời lượng -- vẫn
+# giữ nguyên trong `PresentationEvent.measured_value`/`.unit` (bảng theo dõi
+# chất lượng cần con số này). Nhãn hiển thị (`label_template`) thì KHÔNG còn
+# nhắc lại số khung hình đó nữa: SessionReview.tsx tự ghép câu "Điểm đánh dấu
+# lúc {start_sec}s: {label}" ngay trong giao diện, nên "(bắt đầu ở khung hình
+# N)" trong chính nhãn chỉ là nhắc lại thông tin kỹ thuật đã có ở ngoài. Nhãn
+# ở đây chỉ còn mô tả CHUYỆN GÌ xảy ra (kèm `{duration}` nếu là việc kéo dài
+# thật, bỏ nếu là một khoảnh khắc tức thời) -- không phải "đoạn này là X".
 # `presentation_class.yaml` (hồ sơ lớp học cũ) giữ nguyên kiểu báo cáo gốc,
 # không đổi theo.
 
@@ -96,7 +93,9 @@ event_catalog:
   - E_PACING
   - E_TURNED_AWAY
   - E_CLOSED_POSTURE
-  - E_STABLE_SEGMENT
+  - E_GESTURE
+  - E_HEAD_UP
+  - E_POSTURAL_SWAY_SPIKE
 
 # ---------------------------------------------------------------------------
 # Bộ ngưỡng — chuyển nguyên từ presentation_class, CHƯA hiệu chỉnh cho bối
@@ -114,7 +113,7 @@ events:
     report:
       value: frame
       unit: "khung hình"
-    label_template: "Cúi mặt liên tục {duration} giây (bắt đầu ở khung hình {value})"
+    label_template: "Cúi mặt liên tục {duration} giây"
 
   E_STATIC:
     requires_metrics: [postural_sway, movement_range]
@@ -129,7 +128,7 @@ events:
     report:
       value: frame
       unit: "khung hình"
-    label_template: "Không dịch chuyển trong {duration} giây (bắt đầu ở khung hình {value})"
+    label_template: "Không dịch chuyển trong {duration} giây"
 
   E_PACING:
     requires_metrics: [movement_range]
@@ -142,7 +141,7 @@ events:
     report:
       value: frame
       unit: "khung hình"
-    label_template: "Di chuyển ngang liên tục {duration} giây (bắt đầu ở khung hình {value})"
+    label_template: "Di chuyển ngang liên tục {duration} giây"
 
   E_TURNED_AWAY:
     requires_metrics: [turned_away_ratio]
@@ -155,7 +154,7 @@ events:
     report:
       value: frame
       unit: "khung hình"
-    label_template: "Quay người khỏi hướng khán giả {duration} giây (bắt đầu ở khung hình {value})"
+    label_template: "Quay người khỏi hướng khán giả {duration} giây"
 
   E_CLOSED_POSTURE:
     requires_metrics: [closed_posture_ratio]
@@ -168,37 +167,60 @@ events:
     report:
       value: frame
       unit: "khung hình"
-    label_template: "Khoanh tay hoặc tay để thấp liên tục {duration} giây (bắt đầu ở khung hình {value})"
+    label_template: "Khoanh tay hoặc tay để thấp liên tục {duration} giây"
 
-  # Nhóm tích cực. Đây là VẮNG MẶT điểm yếu, không phải phát hiện điểm mạnh —
-  # không đặt tên là "điểm mạnh" ở bất kỳ đâu trong giao diện lẫn tài liệu.
-  E_STABLE_SEGMENT:
-    requires_metrics:
-      - head_up_ratio
-      - postural_sway
-      - movement_range
-      - closed_posture_ratio
-      - shoulder_tilt
-      - turned_away_ratio
+  # ---------------------------------------------------------------------
+  # Ba sự kiện đếm-số-lần bên dưới là MỚI, ngưỡng TẠM/CHƯA KIỂM CHỨNG (thêm
+  # cùng đợt với cơ chế `trigger: edge` ở models/profiles.py + events/detector.py) —
+  # chưa chạy qua Task 9 như phần còn lại của file. Nhu cầu: đếm được "ngẩng
+  # đầu mấy lần" / "cử chỉ tay mấy lần" thay vì chỉ báo một tỷ lệ gộp cho cả
+  # video, và báo "lắc lư tư thế trong bao nhiêu giây" tại đúng thời điểm xảy
+  # ra thay vì chỉ một số RMS gộp cuối video.
+  # ---------------------------------------------------------------------
+
+  E_GESTURE:
+    requires_metrics: [gesture_rate]
     conditions:
-      - signal: head_up
+      - signal: gesture_active
         comparison: at_least
-        threshold: 0.5
-      - signal: turned_away
-        comparison: below
-        threshold: 0.5
-      - signal: closed_posture
-        comparison: below
-        threshold: 0.5
-      - signal: motion_rate
-        comparison: at_most
-        threshold: 0.45
-      - signal: shoulder_tilt_deg
-        comparison: at_most
-        threshold: 9.0
-    min_duration_sec: 20.0
+        threshold: 1.0
+    trigger: edge
+    min_duration_sec: 0.0
+    # Gộp các lần bật/tắt cách nhau dưới 2 giây thành một cử chỉ, tránh đếm
+    # trùng khi tay rung nhẹ ở ranh giới ngưỡng trong lúc đang giơ lên.
     merge_gap_sec: 2.0
     report:
       value: frame
       unit: "khung hình"
-    label_template: "Mọi chỉ số ổn định trong {duration} giây (bắt đầu ở khung hình {value})"
+    label_template: "Cử chỉ tay"
+
+  E_HEAD_UP:
+    requires_metrics: [head_up_ratio]
+    conditions:
+      - signal: head_up
+        comparison: at_least
+        threshold: 0.5
+    trigger: edge
+    min_duration_sec: 0.0
+    merge_gap_sec: 2.0
+    report:
+      value: frame
+      unit: "khung hình"
+    label_template: "Ngẩng đầu lên"
+
+  # Khác E_GESTURE/E_HEAD_UP: đây vẫn là `trigger: sustained` (mặc định), vì
+  # câu hỏi gốc là "lắc lư TRONG BAO NHIÊU GIÂY" — hướng thời lượng, không
+  # phải đếm số lần. Ngưỡng 0.5 lần-rộng-vai và 3 giây đều là số tạm, chưa có
+  # dữ liệu người ngồi gần webcam thật để đối chứng.
+  E_POSTURAL_SWAY_SPIKE:
+    requires_metrics: [postural_sway]
+    conditions:
+      - signal: postural_sway_dev
+        comparison: at_least
+        threshold: 0.5
+    min_duration_sec: 3.0
+    merge_gap_sec: 2.0
+    report:
+      value: frame
+      unit: "khung hình"
+    label_template: "Lắc lư tư thế trong {duration} giây"

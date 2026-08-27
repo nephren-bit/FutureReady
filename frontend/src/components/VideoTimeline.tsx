@@ -19,13 +19,16 @@ interface VideoTimelineProps {
 // kinds fire close together, without implying any of them is "worse" --
 // this is a location index, not a severity scale (see plan.md's "no
 // diagnosis" rule, which applies to color the same way it applies to text).
-const EVENT_COLORS: Record<string, string> = {
+export const EVENT_COLORS: Record<string, string> = {
   E_HEAD_DOWN: 'bg-warning',
   E_STATIC: 'bg-accent',
   E_PACING: 'bg-accent',
   E_TURNED_AWAY: 'bg-warning',
   E_CLOSED_POSTURE: 'bg-warning',
   E_STABLE_SEGMENT: 'bg-success',
+  E_HEAD_UP: 'bg-success',
+  E_GESTURE: 'bg-accent',
+  E_POSTURAL_SWAY_SPIKE: 'bg-warning',
 }
 
 function pct(sec: number, durationSec: number): number {

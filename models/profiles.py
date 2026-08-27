@@ -26,6 +26,7 @@ Loaded and cached by `services/profile_loader.py`.
 from __future__ import annotations
 
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -139,10 +140,34 @@ class EventRuleSpec(BaseModel):
         description="Rule is skipped entirely unless every listed metric came back measured.",
     )
     conditions: list[RuleCondition] = Field(default_factory=list)
+    trigger: Literal["sustained", "edge"] = Field(
+        "sustained",
+        description=(
+            "'sustained' (default): the event IS a run of consecutive matching "
+            "frames -- filtered by min_duration_sec, merged by merge_gap_sec. For "
+            "something that only means anything because it persisted (E_HEAD_DOWN, "
+            "how long the head stayed down; E_STABLE_SEGMENT). "
+            "'edge': a zero-duration point at the frame a rule starts matching, one "
+            "per occurrence -- for something that IS the event by happening at all "
+            "(a gesture, the moment the head comes back up), not by lasting. "
+            "min_duration_sec must be 0 for an edge rule; merge_gap_sec still "
+            "applies, collapsing a one-frame flicker into a single occurrence "
+            "instead of counting it twice."
+        ),
+    )
     min_duration_sec: float = Field(0.0, ge=0.0)
     merge_gap_sec: float = Field(0.0, ge=0.0)
     report: RuleReport = Field(default_factory=RuleReport)
     label_template: str = ""
+
+    @model_validator(mode="after")
+    def _edge_rules_report_a_point_not_a_range(self) -> "EventRuleSpec":
+        """An edge rule's events are always zero-duration -- a nonzero min_duration_sec would just silently drop every one of them."""
+        if self.trigger == "edge" and self.min_duration_sec != 0.0:
+            raise ValueError(
+                "An edge-triggered rule reports a point, not a range -- min_duration_sec must be 0.0."
+            )
+        return self
 
 
 class ContextProfile(BaseModel):
