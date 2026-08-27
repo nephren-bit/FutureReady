@@ -16,10 +16,18 @@
 # Ngưỡng thời lượng tối thiểu (`min_duration_sec`) copy nguyên từ bối cảnh
 # đứng xa nên nhiều khả năng cần điều chỉnh khi có dữ liệu ngồi gần thật.
 #
-# Khác một chỗ so với presentation_class: E_STATIC/E_PACING/E_TURNED_AWAY ở
-# đây báo khung hình bắt đầu sự kiện (`report.value: frame`) thay vì tỷ lệ
-# chuẩn hoá gốc ("lần rộng vai mỗi giây", "lần mức tham chiếu") — số nguyên
-# dễ hiểu hơn cho người xem lại, không cần biết đơn vị kỹ thuật là gì.
+# Khác một chỗ so với presentation_class: mọi sự kiện ở đây báo khung hình
+# bắt đầu sự kiện (`report.value: frame`) thay vì chỉ báo thời lượng.
+# E_STATIC/E_PACING/E_TURNED_AWAY đổi trước (thay tỷ lệ chuẩn hoá gốc "lần
+# rộng vai mỗi giây", "lần mức tham chiếu" bằng số nguyên dễ định vị hơn).
+# E_HEAD_DOWN/E_CLOSED_POSTURE/E_STABLE_SEGMENT đổi sau, vì lý do khác: nhãn
+# cũ kiểu "Đoạn X giây ... dải tốt" đọc như đang chấm cả một quãng là
+# tốt/xấu, trong khi dải mốc xem lại (VideoTimeline.tsx) chỉ đánh dấu MỘT
+# ĐIỂM — nhãn phải khớp với đó, tức "tại khung hình này, X xảy ra (kéo dài Y
+# giây)", không phải "đoạn này là X". Vẫn giữ nguyên `{duration}` trong nhãn
+# và trong `PresentationEvent.duration_sec` — chỉ đổi cách diễn đạt và neo
+# thêm một mốc bắt đầu, không đổi thuật toán phát hiện hay bỏ dữ liệu thời
+# lượng (bảng theo dõi chất lượng vẫn cần nó).
 # `presentation_class.yaml` (hồ sơ lớp học cũ) giữ nguyên kiểu báo cáo gốc,
 # không đổi theo.
 
@@ -104,9 +112,9 @@ events:
     min_duration_sec: 4.0
     merge_gap_sec: 2.0
     report:
-      value: duration
-      unit: "giây"
-    label_template: "Cúi mặt liên tục {duration} giây"
+      value: frame
+      unit: "khung hình"
+    label_template: "Cúi mặt liên tục {duration} giây (bắt đầu ở khung hình {value})"
 
   E_STATIC:
     requires_metrics: [postural_sway, movement_range]
@@ -158,9 +166,9 @@ events:
     min_duration_sec: 12.0
     merge_gap_sec: 2.0
     report:
-      value: duration
-      unit: "giây"
-    label_template: "Khoanh tay hoặc tay để thấp liên tục {duration} giây"
+      value: frame
+      unit: "khung hình"
+    label_template: "Khoanh tay hoặc tay để thấp liên tục {duration} giây (bắt đầu ở khung hình {value})"
 
   # Nhóm tích cực. Đây là VẮNG MẶT điểm yếu, không phải phát hiện điểm mạnh —
   # không đặt tên là "điểm mạnh" ở bất kỳ đâu trong giao diện lẫn tài liệu.
@@ -191,6 +199,6 @@ events:
     min_duration_sec: 20.0
     merge_gap_sec: 2.0
     report:
-      value: duration
-      unit: "giây"
-    label_template: "Đoạn {duration} giây mọi chỉ số nằm trong dải tốt"
+      value: frame
+      unit: "khung hình"
+    label_template: "Mọi chỉ số ổn định trong {duration} giây (bắt đầu ở khung hình {value})"

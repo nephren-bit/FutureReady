@@ -35,10 +35,20 @@ function pct(sec: number, durationSec: number): number {
 
 /**
  * A clickable strip below the video player: machine-detected events as
- * colored bars, self-notes as small markers above them, and a moving
- * playhead. Clicking anywhere jumps `videoRef.currentTime` there (see
+ * point markers (not bars spanning a range -- a marker is "at this moment,
+ * X happened", never "this whole stretch was good/bad"), self-notes and
+ * peer marks as their own marker rows above it, and a moving playhead.
+ * Clicking anywhere jumps `videoRef.currentTime` there (see
  * `SessionReview.tsx`) -- this component only reports the seek, it never
  * touches the `<video>` element itself.
+ *
+ * An event still has a real `duration_sec` (services/session_mappers.py,
+ * models/events.py are unchanged) -- a sustained thing like "static for
+ * 4.2s" only means something because it persisted. That duration still
+ * shows up in `event.label`'s text and in the quality dashboard; only the
+ * *timeline marker* itself collapses to `event.start_sec`, since a bar
+ * spanning the range reads as "this range is the good/bad part" rather
+ * than "here is the moment to go look at".
  */
 export default function VideoTimeline({
   durationSec,
@@ -92,22 +102,29 @@ export default function VideoTimeline({
         ))}
       </div>
 
-      {/* Event track + playhead */}
+      {/* Event markers -- one dot per event, at its start_sec. Not a bar:
+          see the component doc comment for why a range reads wrong here. */}
+      <div className="relative h-4">
+        {events.map(event => (
+          <button
+            key={event.event_id}
+            type="button"
+            title={event.label}
+            onClick={() => onSeek(event.start_sec)}
+            className={cn(
+              'absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full opacity-90 hover:opacity-100',
+              EVENT_COLORS[event.type] ?? 'bg-text-muted'
+            )}
+            style={{ left: `${pct(event.start_sec, durationSec)}%` }}
+          />
+        ))}
+      </div>
+
+      {/* Scrubber track + playhead */}
       <div
         onClick={handleClick}
         className="relative h-3 w-full cursor-pointer rounded-full bg-surface-elevated"
       >
-        {events.map(event => (
-          <div
-            key={event.event_id}
-            title={event.label}
-            className={cn('absolute top-0 h-full rounded-full opacity-80', EVENT_COLORS[event.type] ?? 'bg-text-muted')}
-            style={{
-              left: `${pct(event.start_sec, durationSec)}%`,
-              width: `${Math.max(0.6, pct(event.duration_sec, durationSec))}%`,
-            }}
-          />
-        ))}
         <div
           className="absolute top-1/2 h-3 w-0.5 -translate-y-1/2 bg-text-primary"
           style={{ left: `${pct(currentSec, durationSec)}%` }}
