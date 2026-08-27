@@ -85,6 +85,37 @@ export interface SelfPracticeSessionSummary {
   created_at: string
 }
 
+// ---------------------------------------------------------------------------
+// Accounts (Nhóm B) -- register/login, JWT kept in localStorage.
+// ---------------------------------------------------------------------------
+
+export interface User {
+  id: string
+  email: string
+  full_name: string
+  is_admin: boolean
+  created_at: string
+}
+
+// Mirrors `models.auth_models.TokenResponse`.
+export interface AuthResponse {
+  access_token: string
+  token_type: string
+  user: User
+}
+
+// Mirrors `models.auth_models.AdminUserResponse` -- the admin-only view
+// (`GET /admin/users`) that also carries `is_active`/`last_login_at`.
+export interface AdminUser {
+  id: string
+  email: string
+  full_name: string
+  is_admin: boolean
+  is_active: boolean
+  created_at: string
+  last_login_at: string | null
+}
+
 export const SELF_PRACTICE_METRIC_LABELS: Record<string, string> = {
   head_up_ratio: 'Tỷ lệ ngẩng đầu',
   postural_sway: 'Độ lắc lư tư thế',

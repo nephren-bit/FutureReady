@@ -1,15 +1,81 @@
 import axios from 'axios'
 import type {
+  AdminUser,
+  AuthResponse,
   SelfPracticeSession,
   SelfPracticeSessionSummary,
   SelfPracticeProfile,
   SelfNote,
 } from '../types'
+import { AUTH_LOGOUT_EVENT, clearAuth, getStoredToken } from './auth'
 
 const api = axios.create({
   baseURL: '/api',
   headers: { 'Content-Type': 'application/json' },
 })
+
+// Every route past /auth/register and /auth/login requires a token
+// (Nhóm B, Task 13) -- attach it here once instead of at every call site.
+api.interceptors.request.use(config => {
+  const token = getStoredToken()
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
+// A 401 means the token is missing, expired, or was revoked by a password
+// change (routers/deps.py) -- drop the stale session everywhere at once
+// instead of leaving the UI showing a logged-in state that the backend no
+// longer honors. AuthContext listens for this to update React state; a
+// plain localStorage write wouldn't trigger a re-render on its own.
+api.interceptors.response.use(
+  response => response,
+  error => {
+    if (error?.response?.status === 401) {
+      clearAuth()
+      window.dispatchEvent(new Event(AUTH_LOGOUT_EVENT))
+    }
+    return Promise.reject(error)
+  }
+)
+
+// ---------------------------------------------------------------------------
+// Accounts (Nhóm B) -- register, login, change password.
+// ---------------------------------------------------------------------------
+
+export async function registerAccount(email: string, password: string, fullName: string): Promise<AuthResponse> {
+  const { data } = await api.post('/auth/register', { email, password, full_name: fullName })
+  return data
+}
+
+export async function loginAccount(email: string, password: string): Promise<AuthResponse> {
+  const { data } = await api.post('/auth/login', { email, password })
+  return data
+}
+
+export async function changePassword(oldPassword: string, newPassword: string): Promise<AuthResponse> {
+  const { data } = await api.post('/auth/change-password', {
+    old_password: oldPassword,
+    new_password: newPassword,
+  })
+  return data
+}
+
+// ---------------------------------------------------------------------------
+// Admin (Nhóm B, Task 13) -- list accounts, lock/unlock. No delete: locking
+// via is_active is the removal mechanism.
+// ---------------------------------------------------------------------------
+
+export async function listAdminUsers(): Promise<AdminUser[]> {
+  const { data } = await api.get('/admin/users')
+  return data
+}
+
+export async function setUserActive(userId: string, isActive: boolean): Promise<AdminUser> {
+  const { data } = await api.patch(`/admin/users/${userId}`, { is_active: isActive })
+  return data
+}
 
 // ---------------------------------------------------------------------------
 // Self Practice (specs/in-class-analysis) -- the product's sole API.
@@ -49,9 +115,16 @@ export async function deleteSelfPracticeSession(id: string): Promise<void> {
 
 // Points a plain <video src> straight at the backend (proxied via /api, see
 // vite.config.ts) rather than going through axios -- the browser streams and
-// seeks the file itself.
+// seeks the file itself, which is why the token has to ride along as a
+// query param instead of the usual Authorization header: a <video> element
+// issues a plain browser GET and can't attach custom headers to it.
+// routers/deps.py's get_current_user_from_header_or_query is the one
+// dependency that accepts it this way; every other endpoint stays
+// header-only.
 export function selfPracticeVideoUrl(id: string): string {
-  return `/api/self-practice/${id}/video`
+  const token = getStoredToken()
+  const query = token ? `?token=${encodeURIComponent(token)}` : ''
+  return `/api/self-practice/${id}/video${query}`
 }
 
 export async function createSelfNote(sessionId: string, markSec: number, text = ''): Promise<SelfNote> {

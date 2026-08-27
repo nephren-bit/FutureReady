@@ -1,16 +1,28 @@
 import { useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
-import { House, List, VideoCamera, X } from '@phosphor-icons/react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { House, List, ShieldCheck, SignOut, VideoCamera, X } from '@phosphor-icons/react'
+import { useAuth } from '../../contexts/AuthContext'
 import { cn } from '../../lib/utils'
 
-const navLinks = [
+const BASE_NAV_LINKS = [
   { to: '/app', label: 'Bảng điều khiển', icon: List },
   { to: '/app/luyen-tap', label: 'Tự luyện', icon: VideoCamera },
 ]
 
+const ADMIN_NAV_LINK = { to: '/app/admin/users', label: 'Quản trị', icon: ShieldCheck }
+
 export default function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const location = useLocation()
+  const navigate = useNavigate()
+  const { user, logout } = useAuth()
+
+  const navLinks = user?.is_admin ? [...BASE_NAV_LINKS, ADMIN_NAV_LINK] : BASE_NAV_LINKS
+
+  function handleLogout() {
+    logout()
+    navigate('/login', { replace: true })
+  }
 
   function isActive(to: string) {
     if (to === '/app') return location.pathname === '/app' || location.pathname === '/app/'
@@ -48,6 +60,18 @@ export default function Navbar() {
           ))}
         </ul>
 
+        <div className="hidden items-center gap-3 sm:flex">
+          {user && <span className="text-sm text-text-secondary dark:text-text-secondary-dark">{user.full_name}</span>}
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-text-secondary dark:text-text-secondary-dark hover:bg-surface-elevated dark:hover:bg-surface-elevated-dark hover:text-text-primary dark:hover:text-text-primary-dark"
+          >
+            <SignOut className="h-4 w-4" weight="regular" />
+            Đăng xuất
+          </button>
+        </div>
+
         <button
           type="button"
           onClick={() => setMobileOpen(!mobileOpen)}
@@ -82,6 +106,19 @@ export default function Navbar() {
                 </Link>
               </li>
             ))}
+            <li>
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileOpen(false)
+                  handleLogout()
+                }}
+                className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-text-secondary dark:text-text-secondary-dark hover:bg-surface-elevated dark:hover:bg-surface-elevated-dark hover:text-text-primary dark:hover:text-text-primary-dark"
+              >
+                <SignOut className="h-5 w-5" weight="regular" />
+                Đăng xuất
+              </button>
+            </li>
           </ul>
         </div>
       )}
