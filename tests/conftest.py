@@ -15,3 +15,6 @@ from __future__ import annotations
 import os
 
 os.environ.setdefault("UPLOAD_DIR", "uploads_test")
+# Test-only JWT secret -- utils/security.py refuses to run without one, and
+# no test should ever need (or accidentally use) a production secret.
+os.environ.setdefault("JWT_SECRET_KEY", "test-jwt-secret-not-a-real-secret")

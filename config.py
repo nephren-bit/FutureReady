@@ -38,6 +38,10 @@ class Settings:
         DATABASE_URL: SQLAlchemy connection string for the session-persistence
             PostgreSQL database (see db/session.py). Uses the psycopg3 driver
             by default (`postgresql+psycopg://...`).
+        JWT_SECRET_KEY: HS256 signing secret for access tokens
+            (utils/security.py). No default -- empty means "unset", and
+            token issue/verify fails loudly rather than signing with a
+            guessable value.
     """
 
     VIDEO_SAMPLE_FRAME_COUNT: Final[int] = int(os.getenv("VIDEO_SAMPLE_FRAME_COUNT", "60"))
@@ -56,6 +60,12 @@ class Settings:
         "DATABASE_URL",
         "postgresql+psycopg://futureready:futureready@localhost:5432/futureready",
     )
+
+    # Deliberately no default: an unset secret must fail loudly at first use
+    # (utils/security.py raises), never fall back to a silently guessable
+    # value. Read here rather than in utils/security.py so all env access
+    # stays in one place.
+    JWT_SECRET_KEY: Final[str] = os.getenv("JWT_SECRET_KEY", "")
 
 
 settings = Settings()

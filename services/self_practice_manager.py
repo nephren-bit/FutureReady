@@ -72,13 +72,19 @@ class SelfPracticeManager:
             raise SelfPracticeSessionNotFoundError(f"No self-practice session with id={session_id}")
         return session
 
-    def list_sessions(self, db: DBSession) -> list[SelfPracticeSessionORM]:
-        """Every session, most recently created first -- for the dashboard."""
-        return (
-            db.query(SelfPracticeSessionORM)
-            .order_by(SelfPracticeSessionORM.created_at.desc())
-            .all()
-        )
+    def list_sessions(
+        self, db: DBSession, owner_id: uuid.UUID | None = None
+    ) -> list[SelfPracticeSessionORM]:
+        """
+        Most recently created first. `owner_id=None` returns every session
+        (the admin view); a real id restricts the list to that owner's own
+        sessions (routers/self_practice.py passes the caller's own id unless
+        they're an admin).
+        """
+        query = db.query(SelfPracticeSessionORM).order_by(SelfPracticeSessionORM.created_at.desc())
+        if owner_id is not None:
+            query = query.filter(SelfPracticeSessionORM.user_id == owner_id)
+        return query.all()
 
     def delete_session(self, db: DBSession, session_id: uuid.UUID) -> None:
         """Deletes the session row (cascading to its pose feature/events/notes) and its video file."""
@@ -88,18 +94,26 @@ class SelfPracticeManager:
         db.commit()
         cleanup_file(video_path)
 
-    def create_session(self, db: DBSession, profile: str, video_file_path: str) -> SelfPracticeSessionORM:
+    def create_session(
+        self, db: DBSession, profile: str, video_file_path: str, user_id: uuid.UUID | None = None
+    ) -> SelfPracticeSessionORM:
         """
         Create a session row in PROCESSING state. Does not run the pipeline
         itself -- the caller schedules `run_pipeline` as a background task
         once this has committed, so the HTTP response doesn't wait on it.
+        `user_id` is the owner (routers/self_practice.py always passes the
+        authenticated caller's id; it's optional here only because sessions
+        recorded before accounts existed have none).
         """
         if profile not in SELF_PRACTICE_PROFILES:
             raise InvalidSelfPracticeProfileError(
                 f"'{profile}' is not a self-practice profile. Allowed: {sorted(SELF_PRACTICE_PROFILES)}"
             )
         session = SelfPracticeSessionORM(
-            profile=profile, video_file_path=video_file_path, state=SelfPracticeState.PROCESSING
+            profile=profile,
+            video_file_path=video_file_path,
+            state=SelfPracticeState.PROCESSING,
+            user_id=user_id,
         )
         db.add(session)
         db.commit()

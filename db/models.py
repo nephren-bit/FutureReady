@@ -26,7 +26,19 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import Uuid
 
@@ -36,6 +48,55 @@ from db.base import Base
 def _uuid_pk() -> Mapped[uuid.UUID]:
     """Shared UUID primary-key column definition."""
     return mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+
+
+# ---------------------------------------------------------------------------
+# Accounts (Nhóm B)
+# ---------------------------------------------------------------------------
+
+
+class UserORM(Base):
+    """
+    One account. Every account has the same rights; `is_admin` is the only
+    distinction, set from the CLI (`scripts/create_admin.py`), never from
+    the UI. Deliberately NO `role` column -- see
+    `specs/in-class-analysis/plan.md`, "Đăng ký, đăng nhập và phân quyền".
+
+    Email uniqueness is case-insensitive: the unique index is on
+    `lower(email)`, and the service layer normalizes to lowercase before
+    storing/matching, so `An@x.vn` and `an@x.vn` are the same account.
+
+    Locking an account flips `is_active` -- rows are never deleted, so a
+    locked user's practice-session history stays intact.
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    full_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+
+    is_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Set on every password change; tokens whose `iat` predates it are
+    # rejected (routers/deps.py). This is what makes changing a password
+    # actually revoke a stolen session instead of leaving old tokens live
+    # for their remaining 7-day lifetime. NULL = never changed.
+    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    sessions: Mapped[list["SelfPracticeSessionORM"]] = relationship(back_populates="owner")
+
+
+# Case-insensitive uniqueness: an expression index can't go in
+# `__table_args__` before the column exists, so it's declared here against
+# the mapped column. The service layer also lowercases before storing, so
+# this index is the backstop, not the primary mechanism.
+Index("uq_users_email_lower", func.lower(UserORM.email), unique=True)
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +127,16 @@ class SelfPracticeSessionORM(Base):
     profile: Mapped[str] = mapped_column(String(64), nullable=False)
     video_file_path: Mapped[str] = mapped_column(String(1024), nullable=False)
 
+    # Nullable: sessions recorded before accounts existed have no owner.
+    # Those are reachable only by admins (see routers/self_practice.py's
+    # ownership rule), never silently claimed by whoever finds the id.
+    # ON DELETE SET NULL rather than CASCADE: locking (is_active) is the
+    # product's removal mechanism -- rows are never deleted -- but if a user
+    # row ever is removed, their recordings must not vanish with it.
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     state: Mapped[SelfPracticeState] = mapped_column(
         Enum(SelfPracticeState, name="self_practice_state", values_callable=lambda obj: [e.value for e in obj]),
         nullable=False,
@@ -87,6 +158,7 @@ class SelfPracticeSessionORM(Base):
     self_notes: Mapped[list["SelfNoteORM"]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
     )
+    owner: Mapped["UserORM | None"] = relationship(back_populates="sessions")
 
 
 class SelfNoteORM(Base):

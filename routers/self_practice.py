@@ -10,9 +10,11 @@ run the actual analysis as a `BackgroundTasks` job so the HTTP response
 doesn't wait on it. Talks only to `SelfPracticeManager` -- this product
 never computes a total score (see `specs/in-class-analysis/plan.md`).
 
-No ownership/auth check on any endpoint: there is no account system yet for
-this flow (Nhom B). Anyone with a session id can read or edit it, matching
-the no-login nature of the rest of this milestone.
+Every route requires a valid token and enforces ownership (Nhóm B, Task 13
+/ Plans.md B4): a session belongs to whoever created it, and an admin can
+reach any session, including one with no owner at all (`user_id IS NULL`
+-- recorded before accounts existed; never silently claimed by whoever
+happens to know its id).
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session as DBSession
 
 from config import settings
+from db.models import SelfPracticeSessionORM, UserORM
 from db.session import SessionLocal, get_db
 from models.responses import ErrorResponse
 from models.self_practice_models import (
@@ -34,6 +37,7 @@ from models.self_practice_models import (
     SelfPracticeSessionResponse,
     SelfPracticeSessionSummary,
 )
+from routers.deps import get_current_user, get_current_user_from_header_or_query
 from services.self_practice_manager import (
     InvalidSelfPracticeProfileError,
     SelfNoteNotFoundError,
@@ -47,7 +51,27 @@ logger = get_logger(__name__)
 
 router = APIRouter(prefix="/self-practice", tags=["Self Practice"])
 
-_ERROR_RESPONSES = {404: {"model": ErrorResponse}, 400: {"model": ErrorResponse}}
+_ERROR_RESPONSES = {
+    401: {"model": ErrorResponse},
+    403: {"model": ErrorResponse},
+    404: {"model": ErrorResponse},
+    400: {"model": ErrorResponse},
+}
+
+
+def _ensure_owner(session: SelfPracticeSessionORM, current_user: UserORM) -> None:
+    """
+    403 unless the caller is an admin or the session's own `user_id`.
+    A NULL `user_id` (a session recorded before accounts existed) is never
+    treated as "unowned, so anyone can take it" -- only an admin passes.
+    """
+    if current_user.is_admin:
+        return
+    if session.user_id is None or session.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Không có quyền truy cập phiên này."
+        )
+
 
 # Browsers' MediaRecorder commonly produces .webm (Chrome/Firefox) or .mp4
 # (Safari); broader than settings.ALLOWED_VIDEO_EXTENSIONS, which is the
@@ -83,10 +107,13 @@ def _to_response(db: DBSession, session_id: uuid.UUID) -> SelfPracticeSessionRes
 @router.get(
     "",
     response_model=list[SelfPracticeSessionSummary],
-    summary="List every self-practice session, most recently created first.",
+    summary="List the caller's own self-practice sessions, most recently created first (every session, for an admin).",
 )
-async def list_self_practice_sessions(db: DBSession = Depends(get_db)) -> list[SelfPracticeSessionSummary]:
-    sessions = self_practice_manager.list_sessions(db)
+async def list_self_practice_sessions(
+    current_user: UserORM = Depends(get_current_user), db: DBSession = Depends(get_db)
+) -> list[SelfPracticeSessionSummary]:
+    owner_id = None if current_user.is_admin else current_user.id
+    sessions = self_practice_manager.list_sessions(db, owner_id=owner_id)
     return [SelfPracticeSessionSummary.from_orm_session(session) for session in sessions]
 
 
@@ -101,6 +128,7 @@ async def create_self_practice_session(
     background_tasks: BackgroundTasks,
     profile: str = Form(..., description="presentation_solo or interview_solo."),
     video: UploadFile = File(..., description="Self-practice recording (.mp4/.mov/.m4v/.webm)."),
+    current_user: UserORM = Depends(get_current_user),
     db: DBSession = Depends(get_db),
 ) -> SelfPracticeSessionResponse:
     extension = validate_extension(video, _ALLOWED_EXTENSIONS)
@@ -110,7 +138,7 @@ async def create_self_practice_session(
     saved_path: Path = await save_upload_file(video, extension, max_size_bytes=settings.MAX_VIDEO_SIZE_BYTES)
 
     try:
-        session = self_practice_manager.create_session(db, profile, str(saved_path))
+        session = self_practice_manager.create_session(db, profile, str(saved_path), user_id=current_user.id)
     except InvalidSelfPracticeProfileError as exc:
         cleanup_file(saved_path)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -126,12 +154,16 @@ async def create_self_practice_session(
     summary="Get a self-practice session: state, pose metrics, events, and notes.",
 )
 async def get_self_practice_session(
-    session_id: uuid.UUID, db: DBSession = Depends(get_db)
+    session_id: uuid.UUID,
+    current_user: UserORM = Depends(get_current_user),
+    db: DBSession = Depends(get_db),
 ) -> SelfPracticeSessionResponse:
     try:
-        return _to_response(db, session_id)
+        session = self_practice_manager.get_session(db, session_id)
     except SelfPracticeSessionNotFoundError as exc:
         raise _not_found(exc) from exc
+    _ensure_owner(session, current_user)
+    return _to_response(db, session_id)
 
 
 @router.get(
@@ -139,11 +171,16 @@ async def get_self_practice_session(
     responses=_ERROR_RESPONSES,
     summary="Stream the recorded video for the review player.",
 )
-async def get_self_practice_video(session_id: uuid.UUID, db: DBSession = Depends(get_db)) -> FileResponse:
+async def get_self_practice_video(
+    session_id: uuid.UUID,
+    current_user: UserORM = Depends(get_current_user_from_header_or_query),
+    db: DBSession = Depends(get_db),
+) -> FileResponse:
     try:
         session = self_practice_manager.get_session(db, session_id)
     except SelfPracticeSessionNotFoundError as exc:
         raise _not_found(exc) from exc
+    _ensure_owner(session, current_user)
 
     video_path = Path(session.video_file_path)
     if not video_path.is_file():
@@ -159,11 +196,17 @@ async def get_self_practice_video(session_id: uuid.UUID, db: DBSession = Depends
     responses=_ERROR_RESPONSES,
     summary="Delete a self-practice session, its pose data/events/notes, and its video file.",
 )
-async def delete_self_practice_session(session_id: uuid.UUID, db: DBSession = Depends(get_db)) -> None:
+async def delete_self_practice_session(
+    session_id: uuid.UUID,
+    current_user: UserORM = Depends(get_current_user),
+    db: DBSession = Depends(get_db),
+) -> None:
     try:
-        self_practice_manager.delete_session(db, session_id)
+        session = self_practice_manager.get_session(db, session_id)
     except SelfPracticeSessionNotFoundError as exc:
         raise _not_found(exc) from exc
+    _ensure_owner(session, current_user)
+    self_practice_manager.delete_session(db, session_id)
 
 
 @router.post(
@@ -174,12 +217,17 @@ async def delete_self_practice_session(session_id: uuid.UUID, db: DBSession = De
     summary="Add a self-review note at a point on the timeline.",
 )
 async def create_self_note(
-    session_id: uuid.UUID, body: SelfNoteCreateRequest, db: DBSession = Depends(get_db)
+    session_id: uuid.UUID,
+    body: SelfNoteCreateRequest,
+    current_user: UserORM = Depends(get_current_user),
+    db: DBSession = Depends(get_db),
 ) -> SelfNoteResponse:
     try:
-        note = self_practice_manager.create_note(db, session_id, body.mark_sec, body.text)
+        session = self_practice_manager.get_session(db, session_id)
     except SelfPracticeSessionNotFoundError as exc:
         raise _not_found(exc) from exc
+    _ensure_owner(session, current_user)
+    note = self_practice_manager.create_note(db, session_id, body.mark_sec, body.text)
     return SelfNoteResponse.from_orm_note(note)
 
 
@@ -190,10 +238,15 @@ async def create_self_note(
     summary="Edit a self-review note in place.",
 )
 async def update_self_note(
-    session_id: uuid.UUID, note_id: uuid.UUID, body: SelfNoteUpdateRequest, db: DBSession = Depends(get_db)
+    session_id: uuid.UUID,
+    note_id: uuid.UUID,
+    body: SelfNoteUpdateRequest,
+    current_user: UserORM = Depends(get_current_user),
+    db: DBSession = Depends(get_db),
 ) -> SelfNoteResponse:
     try:
-        self_practice_manager.get_session(db, session_id)
+        session = self_practice_manager.get_session(db, session_id)
+        _ensure_owner(session, current_user)
         note = self_practice_manager.update_note(db, note_id, mark_sec=body.mark_sec, text=body.text)
     except (SelfPracticeSessionNotFoundError, SelfNoteNotFoundError) as exc:
         raise _not_found(exc) from exc
@@ -207,9 +260,15 @@ async def update_self_note(
     responses=_ERROR_RESPONSES,
     summary="Delete a self-review note.",
 )
-async def delete_self_note(session_id: uuid.UUID, note_id: uuid.UUID, db: DBSession = Depends(get_db)) -> None:
+async def delete_self_note(
+    session_id: uuid.UUID,
+    note_id: uuid.UUID,
+    current_user: UserORM = Depends(get_current_user),
+    db: DBSession = Depends(get_db),
+) -> None:
     try:
-        self_practice_manager.get_session(db, session_id)
+        session = self_practice_manager.get_session(db, session_id)
+        _ensure_owner(session, current_user)
         self_practice_manager.delete_note(db, note_id)
     except (SelfPracticeSessionNotFoundError, SelfNoteNotFoundError) as exc:
         raise _not_found(exc) from exc

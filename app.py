@@ -26,7 +26,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
-from routers import self_practice
+from routers import admin, auth, self_practice
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -64,6 +64,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
+app.include_router(admin.router)
 app.include_router(self_practice.router)
 
 

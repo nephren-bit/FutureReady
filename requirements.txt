@@ -40,6 +40,11 @@ sqlalchemy==2.0.36
 psycopg[binary]==3.2.3
 alembic==1.14.0
 
+# Accounts (Nhóm B): password hashing + JWT + email format validation
+bcrypt==5.0.0
+PyJWT==2.9.0
+email-validator==2.3.0
+
 # Recommendation Engine catalog seeding (scripts/seed_learning_resources.py)
 pandas==2.2.3
 openpyxl==3.1.5
