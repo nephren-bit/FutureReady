@@ -1,11 +1,17 @@
 import { cn } from '../lib/utils'
-import type { PresentationEvent, SelfNote } from '../types'
+import type { PeerNote, PresentationEvent, SelfNote } from '../types'
 
 interface VideoTimelineProps {
   durationSec: number
   currentSec: number
   events: PresentationEvent[]
   notes: SelfNote[]
+  // Peer marks (Nhom C) render as their own row, visually distinct from
+  // self-notes -- a friend's blind mark and the owner's own journal entry
+  // are never the same kind of thing (see models/peer_review.py). Rows
+  // with mark_sec === null (the rubric submission) are filtered out here,
+  // not by the caller -- they have nowhere on a timeline to sit.
+  peerNotes?: PeerNote[]
   onSeek: (sec: number) => void
 }
 
@@ -34,15 +40,42 @@ function pct(sec: number, durationSec: number): number {
  * `SessionReview.tsx`) -- this component only reports the seek, it never
  * touches the `<video>` element itself.
  */
-export default function VideoTimeline({ durationSec, currentSec, events, notes, onSeek }: VideoTimelineProps) {
+export default function VideoTimeline({
+  durationSec,
+  currentSec,
+  events,
+  notes,
+  peerNotes = [],
+  onSeek,
+}: VideoTimelineProps) {
   function handleClick(e: React.MouseEvent<HTMLDivElement>) {
     const rect = e.currentTarget.getBoundingClientRect()
     const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width))
     onSeek(ratio * durationSec)
   }
 
+  const peerMarks = peerNotes.filter((note): note is PeerNote & { mark_sec: number } => note.mark_sec !== null)
+
   return (
     <div className="select-none">
+      {/* Peer mark row (Nhom C) -- only rendered when there's at least one completed review to show. */}
+      {peerMarks.length > 0 && (
+        <div className="relative h-4">
+          {peerMarks.map(note => (
+            <button
+              key={note.note_id}
+              type="button"
+              title={note.text || 'Mốc từ bạn chấm hộ'}
+              onClick={() => onSeek(note.mark_sec)}
+              className="absolute -translate-x-1/2 text-warning hover:opacity-80"
+              style={{ left: `${pct(note.mark_sec, durationSec)}%` }}
+            >
+              ▾
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Note markers */}
       <div className="relative h-4">
         {notes.map(note => (

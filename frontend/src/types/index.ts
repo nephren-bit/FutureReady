@@ -73,6 +73,8 @@ export interface SelfPracticeSession {
   pose_feature: PoseFeature | null
   events: PresentationEvent[]
   notes: SelfNote[]
+  // Only ever populated from COMPLETED peer-review invites (Nhom C, Task 17).
+  peer_notes: PeerNote[]
   created_at: string
   updated_at: string
 }
@@ -114,6 +116,82 @@ export interface AdminUser {
   is_active: boolean
   created_at: string
   last_login_at: string | null
+}
+
+// ---------------------------------------------------------------------------
+// Peer review ("nhờ bạn chấm hộ", Nhom C) -- the plan's only independent-
+// judgment data source. PeerNote is a separate concept from SelfNote: it's
+// someone else's blind mark, not the owner's own journal entry.
+// ---------------------------------------------------------------------------
+
+export type PeerReviewStatus = 'pending' | 'completed' | 'expired' | 'revoked'
+
+// Mirrors `models.peer_review.RUBRIC_CRITERIA` -- fixed, no freeform criteria.
+export const RUBRIC_CRITERIA = ['clarity', 'confidence', 'engagement'] as const
+export type RubricCriterion = (typeof RUBRIC_CRITERIA)[number]
+export type RubricScores = Record<RubricCriterion, number>
+
+export const RUBRIC_LABELS: Record<RubricCriterion, string> = {
+  clarity: 'Rõ ràng',
+  confidence: 'Tự tin',
+  engagement: 'Thu hút',
+}
+
+export interface PeerReviewInvite {
+  invite_id: string
+  token: string
+  status: PeerReviewStatus
+  created_at: string
+  expires_at: string
+}
+
+// One row of a rater's blind review: a moment mark (mark_sec set, empty
+// rubric_scores) or the final rubric row (mark_sec null, rubric_scores filled).
+export interface PeerNote {
+  note_id: string
+  session_id: string
+  mark_sec: number | null
+  rubric_scores: Partial<RubricScores>
+  text: string | null
+  created_at: string
+}
+
+// Response for GET /peer-review/invites/{token}. Shape depends on status --
+// pose_feature/events are only ever populated once status === 'completed'.
+export interface PeerReviewState {
+  status: PeerReviewStatus
+  session_id: string
+  profile: SelfPracticeProfile
+  pose_feature: PoseFeature | null
+  events: PresentationEvent[]
+  own_marks: PeerNote[]
+}
+
+// ---------------------------------------------------------------------------
+// Detection-quality dashboard (Nhom B Task 14 / Nhom C Task 18) -- admin-only,
+// read-only. `precision`/`miss_rate`/`invite_completion_rate` are `null`,
+// never `0`, when there isn't enough data yet to measure them at all.
+// ---------------------------------------------------------------------------
+
+export interface EventTypeQuality {
+  profile: string
+  event_type: string
+  system_events: number
+  system_matched: number
+  precision: number | null
+}
+
+export interface QualityReport {
+  generated_at: string
+  tolerance_sec: number
+  by_event_type: EventTypeQuality[]
+  peer_marks_total: number
+  peer_marks_missed: number
+  miss_rate: number | null
+  invites_total: number
+  invites_completed: number
+  invite_completion_rate: number | null
+  sessions_with_peer_review: number
 }
 
 export const SELF_PRACTICE_METRIC_LABELS: Record<string, string> = {

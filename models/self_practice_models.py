@@ -5,10 +5,12 @@ Pydantic request/response schemas for the Self Practice API
 (`routers/self_practice.py`, specs/in-class-analysis Task 7/8).
 
 `SelfPracticeSessionResponse.notes` is built through `SelfPracticeManager`
-rather than read off the ORM relationship directly, so the shape of "the
-human-marked layer on this timeline" stays stable if Nhom C later swaps
-`SelfNote` for `PeerNote` here — the response field does not need to change,
-only what feeds it.
+rather than read off the ORM relationship directly, keeping "the owner's
+private journal layer" a stable shape regardless of what feeds it.
+`peer_notes` (Nhom C, Task 17) is its own field, not a shared one with
+`notes` -- `SelfNote` and `PeerNote` are never merged anywhere, including
+here, for the same reason they are separate tables (see
+`models/peer_review.py`).
 """
 
 from __future__ import annotations
@@ -18,9 +20,10 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from db.models import SelfNoteORM, SelfPracticeSessionORM, SelfPracticeState
+from db.models import PeerNoteORM, SelfNoteORM, SelfPracticeSessionORM, SelfPracticeState
 from models.events import PresentationEvent
 from models.features import PoseFeature
+from models.peer_review_models import PeerNoteResponse
 
 __all__ = [
     "SelfPracticeState",
@@ -97,6 +100,10 @@ class SelfPracticeSessionResponse(BaseModel):
     pose_feature: PoseFeature | None = None
     events: list[PresentationEvent] = Field(default_factory=list)
     notes: list[SelfNoteResponse] = Field(default_factory=list)
+    # Only ever populated with peer notes from COMPLETED invites (Nhom C,
+    # Task 17) -- routers/self_practice.py never passes in a mid-review
+    # rater's blind marks, those live behind routers/peer_review.py instead.
+    peer_notes: list[PeerNoteResponse] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -108,6 +115,7 @@ class SelfPracticeSessionResponse(BaseModel):
         pose_feature: PoseFeature | None,
         events: list[PresentationEvent],
         notes: list[SelfNoteORM],
+        peer_notes: list[PeerNoteORM] = (),
     ) -> "SelfPracticeSessionResponse":
         return cls(
             id=session.id,
@@ -117,6 +125,7 @@ class SelfPracticeSessionResponse(BaseModel):
             pose_feature=pose_feature,
             events=events,
             notes=[SelfNoteResponse.from_orm_note(note) for note in notes],
+            peer_notes=[PeerNoteResponse.from_orm_note(note) for note in peer_notes],
             created_at=session.created_at,
             updated_at=session.updated_at,
         )

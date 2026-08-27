@@ -38,6 +38,7 @@ from models.self_practice_models import (
     SelfPracticeSessionSummary,
 )
 from routers.deps import get_current_user, get_current_user_from_header_or_query
+from services.peer_review_manager import peer_review_manager
 from services.self_practice_manager import (
     InvalidSelfPracticeProfileError,
     SelfNoteNotFoundError,
@@ -99,8 +100,11 @@ def _to_response(db: DBSession, session_id: uuid.UUID) -> SelfPracticeSessionRes
     pose_feature = self_practice_manager.get_pose_feature(db, session_id)
     events = self_practice_manager.list_events(db, session_id)
     notes = self_practice_manager.list_notes(db, session_id)
+    # Only from COMPLETED invites (Nhom C, Task 17) -- a still-pending
+    # rater's blind marks never leak into the owner's own view either.
+    peer_notes = peer_review_manager.list_completed_peer_notes(db, session_id)
     return SelfPracticeSessionResponse.from_orm_session(
-        session, pose_feature=pose_feature, events=events, notes=notes
+        session, pose_feature=pose_feature, events=events, notes=notes, peer_notes=peer_notes
     )
 
 

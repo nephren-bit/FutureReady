@@ -1,12 +1,45 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { motion } from 'motion/react'
-import { ArrowLeft, Warning, NotePencil, PencilSimple, Trash, Check, X } from '@phosphor-icons/react'
-import { getSelfPracticeSession, selfPracticeVideoUrl, createSelfNote, updateSelfNote, deleteSelfNote } from '../lib/api'
-import type { SelfPracticeSession, SelfNote, PoseFeature, PoseMetric } from '../types'
-import { SELF_PRACTICE_METRIC_LABELS } from '../types'
+import {
+  ArrowLeft,
+  Warning,
+  NotePencil,
+  PencilSimple,
+  Trash,
+  Check,
+  X,
+  UserPlus,
+  Copy,
+  Star,
+} from '@phosphor-icons/react'
+import {
+  getSelfPracticeSession,
+  selfPracticeVideoUrl,
+  createSelfNote,
+  updateSelfNote,
+  deleteSelfNote,
+  createPeerInvite,
+  listPeerInvites,
+  revokePeerInvite,
+} from '../lib/api'
+import type { SelfPracticeSession, SelfNote, PoseFeature, PoseMetric, PeerReviewInvite } from '../types'
+import { SELF_PRACTICE_METRIC_LABELS, RUBRIC_LABELS } from '../types'
 import VideoTimeline from '../components/VideoTimeline'
 import { cn } from '../lib/utils'
+
+const INVITE_STATUS_LABELS: Record<PeerReviewInvite['status'], string> = {
+  pending: 'Đang chờ',
+  completed: 'Đã chấm xong',
+  expired: 'Hết hạn',
+  revoked: 'Đã thu hồi',
+}
+
+function inviteStatusColor(status: PeerReviewInvite['status']): string {
+  if (status === 'completed') return 'bg-success-light text-success'
+  if (status === 'pending') return 'bg-accent-light text-accent'
+  return 'bg-surface-elevated text-text-muted'
+}
 
 type PoseMetricName = Exclude<
   keyof PoseFeature,
@@ -41,6 +74,11 @@ export default function SessionReview() {
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null)
   const [editingText, setEditingText] = useState('')
   const [noteError, setNoteError] = useState<string | null>(null)
+
+  const [invites, setInvites] = useState<PeerReviewInvite[]>([])
+  const [inviteError, setInviteError] = useState<string | null>(null)
+  const [creatingInvite, setCreatingInvite] = useState(false)
+  const [copiedInviteId, setCopiedInviteId] = useState<string | null>(null)
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -124,6 +162,54 @@ export default function SessionReview() {
     }
   }, [id])
 
+  const fetchInvites = useCallback(async () => {
+    if (!id) return
+    try {
+      setInvites(await listPeerInvites(id))
+    } catch {
+      // Not fatal to the page -- the review itself already loaded fine.
+    }
+  }, [id])
+
+  useEffect(() => {
+    if (session?.state === 'completed') fetchInvites()
+  }, [session?.state, fetchInvites])
+
+  const handleCreateInvite = useCallback(async () => {
+    if (!id) return
+    setInviteError(null)
+    setCreatingInvite(true)
+    try {
+      const invite = await createPeerInvite(id)
+      setInvites(prev => [invite, ...prev])
+    } catch (err: any) {
+      setInviteError(err?.response?.data?.detail || 'Không thể tạo lời mời.')
+    } finally {
+      setCreatingInvite(false)
+    }
+  }, [id])
+
+  const handleRevokeInvite = useCallback(async (inviteId: string) => {
+    if (!id) return
+    try {
+      const updated = await revokePeerInvite(id, inviteId)
+      setInvites(prev => prev.map(inv => (inv.invite_id === updated.invite_id ? updated : inv)))
+    } catch (err: any) {
+      setInviteError(err?.response?.data?.detail || 'Không thể thu hồi lời mời.')
+    }
+  }, [id])
+
+  const handleCopyLink = useCallback(async (invite: PeerReviewInvite) => {
+    const url = `${window.location.origin}/cham-ho/${invite.token}`
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopiedInviteId(invite.invite_id)
+      setTimeout(() => setCopiedInviteId(prev => (prev === invite.invite_id ? null : prev)), 2000)
+    } catch {
+      setInviteError('Không thể sao chép liên kết -- hãy tự chọn và sao chép.')
+    }
+  }, [])
+
   if (loading) {
     return (
       <div className="max-w-4xl mx-auto px-6 py-16 flex items-center justify-center">
@@ -196,6 +282,7 @@ export default function SessionReview() {
               currentSec={currentSec}
               events={session.events}
               notes={session.notes}
+              peerNotes={session.peer_notes}
               onSeek={handleSeek}
             />
           </div>
@@ -324,6 +411,103 @@ export default function SessionReview() {
               </ul>
             )}
           </div>
+
+          <div className="mt-6 rounded-xl border border-border bg-surface p-5">
+            <h3 className="text-sm font-semibold text-text-primary mb-1 flex items-center gap-2">
+              <UserPlus className="h-4 w-4" />
+              Nhờ bạn chấm hộ
+            </h3>
+            <p className="mb-4 text-xs text-text-muted">
+              Bạn được mời sẽ xem video và chấm mù -- không thấy dải mốc máy hay bảng chỉ số cho tới khi
+              nộp xong đánh giá.
+            </p>
+
+            {inviteError && <p className="mb-3 text-xs text-error">{inviteError}</p>}
+
+            <button
+              type="button"
+              onClick={handleCreateInvite}
+              disabled={creatingInvite}
+              className="mb-4 inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-50"
+            >
+              <UserPlus className="h-4 w-4" />
+              {creatingInvite ? 'Đang tạo...' : 'Tạo lời mời mới'}
+            </button>
+
+            {invites.length === 0 ? (
+              <p className="text-xs text-text-muted">Chưa gửi lời mời nào.</p>
+            ) : (
+              <ul className="space-y-2">
+                {invites.map(invite => (
+                  <li
+                    key={invite.invite_id}
+                    className="flex items-center gap-2 rounded-lg border border-border p-2 text-xs"
+                  >
+                    <span className={cn('rounded-full px-2 py-1 font-medium shrink-0', inviteStatusColor(invite.status))}>
+                      {INVITE_STATUS_LABELS[invite.status]}
+                    </span>
+                    <span className="flex-1 truncate font-mono text-text-muted">{invite.token}</span>
+                    {invite.status === 'pending' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyLink(invite)}
+                          className="inline-flex items-center gap-1 text-text-muted hover:text-accent"
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                          {copiedInviteId === invite.invite_id ? 'Đã chép' : 'Chép liên kết'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRevokeInvite(invite.invite_id)}
+                          className="text-text-muted hover:text-error"
+                        >
+                          Thu hồi
+                        </button>
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          {session.peer_notes.length > 0 && (
+            <div className="mt-6 rounded-xl border border-border bg-surface p-5">
+              <h3 className="text-sm font-semibold text-text-primary mb-4 flex items-center gap-2">
+                <Star className="h-4 w-4" />
+                Đánh giá từ bạn bè
+              </h3>
+              <ul className="space-y-2">
+                {session.peer_notes.map(note =>
+                  note.mark_sec !== null ? (
+                    <li key={note.note_id} className="flex items-center gap-2 rounded-lg border border-border p-2">
+                      <button
+                        type="button"
+                        onClick={() => handleSeek(note.mark_sec as number)}
+                        className="text-xs font-mono text-text-muted shrink-0 hover:text-accent"
+                      >
+                        {Math.round(note.mark_sec)}s
+                      </button>
+                      <span className="flex-1 text-sm text-text-primary">{note.text || '(đánh dấu, không có ghi chú)'}</span>
+                    </li>
+                  ) : (
+                    <li key={note.note_id} className="rounded-lg border border-border p-3">
+                      <div className="flex flex-wrap gap-4">
+                        {Object.entries(note.rubric_scores).map(([criterion, score]) => (
+                          <span key={criterion} className="text-xs text-text-secondary">
+                            {RUBRIC_LABELS[criterion as keyof typeof RUBRIC_LABELS] ?? criterion}:{' '}
+                            <span className="font-semibold text-text-primary">{score}/5</span>
+                          </span>
+                        ))}
+                      </div>
+                      {note.text && <p className="mt-2 text-sm text-text-primary">{note.text}</p>}
+                    </li>
+                  )
+                )}
+              </ul>
+            </div>
+          )}
         </>
       )}
     </div>

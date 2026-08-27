@@ -2,6 +2,11 @@ import axios from 'axios'
 import type {
   AdminUser,
   AuthResponse,
+  PeerNote,
+  PeerReviewInvite,
+  PeerReviewState,
+  QualityReport,
+  RubricScores,
   SelfPracticeSession,
   SelfPracticeSessionSummary,
   SelfPracticeProfile,
@@ -77,6 +82,12 @@ export async function setUserActive(userId: string, isActive: boolean): Promise<
   return data
 }
 
+// Detection-quality dashboard (Nhom B Task 14 / Nhom C Task 18).
+export async function getQualityReport(): Promise<QualityReport> {
+  const { data } = await api.get('/admin/quality-report')
+  return data
+}
+
 // ---------------------------------------------------------------------------
 // Self Practice (specs/in-class-analysis) -- the product's sole API.
 //
@@ -123,7 +134,7 @@ export async function deleteSelfPracticeSession(id: string): Promise<void> {
 // header-only.
 export function selfPracticeVideoUrl(id: string): string {
   const token = getStoredToken()
-  const query = token ? `?token=${encodeURIComponent(token)}` : ''
+  const query = token ? `?access_token=${encodeURIComponent(token)}` : ''
   return `/api/self-practice/${id}/video${query}`
 }
 
@@ -143,4 +154,56 @@ export async function updateSelfNote(
 
 export async function deleteSelfNote(sessionId: string, noteId: string): Promise<void> {
   await api.delete(`/self-practice/${sessionId}/notes/${noteId}`)
+}
+
+// ---------------------------------------------------------------------------
+// Peer review ("nhờ bạn chấm hộ", Nhom C) -- owner-facing invite management,
+// then the rater-facing blind-review flow by token.
+// ---------------------------------------------------------------------------
+
+export async function createPeerInvite(sessionId: string): Promise<PeerReviewInvite> {
+  const { data } = await api.post(`/self-practice/${sessionId}/peer-invites`)
+  return data
+}
+
+export async function listPeerInvites(sessionId: string): Promise<PeerReviewInvite[]> {
+  const { data } = await api.get(`/self-practice/${sessionId}/peer-invites`)
+  return data
+}
+
+export async function revokePeerInvite(sessionId: string, inviteId: string): Promise<PeerReviewInvite> {
+  const { data } = await api.delete(`/self-practice/${sessionId}/peer-invites/${inviteId}`)
+  return data
+}
+
+export async function getPeerReviewInvite(token: string): Promise<PeerReviewState> {
+  const { data } = await api.get(`/peer-review/invites/${token}`)
+  return data
+}
+
+// Same query-param pattern as selfPracticeVideoUrl -- a plain <video src>
+// can't carry the Authorization header. Named access_token, not token, so
+// it never collides with this route's own {token} path parameter (the
+// invite token) -- see routers/deps.py's get_current_user_from_header_or_query.
+export function peerReviewVideoUrl(token: string): string {
+  const authToken = getStoredToken()
+  const query = authToken ? `?access_token=${encodeURIComponent(authToken)}` : ''
+  return `/api/peer-review/invites/${token}/video${query}`
+}
+
+export async function addPeerMark(token: string, markSec: number, text?: string): Promise<PeerNote> {
+  const { data } = await api.post(`/peer-review/invites/${token}/marks`, { mark_sec: markSec, text })
+  return data
+}
+
+export async function submitPeerRubric(
+  token: string,
+  rubricScores: RubricScores,
+  text?: string
+): Promise<PeerReviewState> {
+  const { data } = await api.post(`/peer-review/invites/${token}/submit`, {
+    rubric_scores: rubricScores,
+    text,
+  })
+  return data
 }

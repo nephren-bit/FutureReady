@@ -9,6 +9,8 @@ import Dashboard from './pages/Dashboard'
 import SelfPractice from './pages/SelfPractice'
 import SessionReview from './pages/SessionReview'
 import AdminUsers from './pages/AdminUsers'
+import AdminQuality from './pages/AdminQuality'
+import PeerReview from './pages/PeerReview'
 
 // Every /app/* route requires an account (Nhóm B, Task 13) -- redirect to
 // /login and remember where the person was headed so Login.tsx can send
@@ -35,7 +37,34 @@ function ProtectedApp() {
             path="admin/users"
             element={user?.is_admin ? <AdminUsers /> : <Navigate to="/app" replace />}
           />
+          <Route
+            path="admin/quality"
+            element={user?.is_admin ? <AdminQuality /> : <Navigate to="/app" replace />}
+          />
         </Routes>
+      </main>
+      <Footer />
+    </>
+  )
+}
+
+// /cham-ho/:token (Nhom C peer review) also requires login -- "B đăng nhập
+// hoặc tạo tài khoản tại chỗ" (plan.md) -- but is not nested under /app/*:
+// a rater isn't navigating the product's own dashboard, just opening one
+// link, so it gets its own guard rather than living inside ProtectedApp.
+function RequirePeerReviewAuth() {
+  const { isAuthenticated } = useAuth()
+  const location = useLocation()
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />
+  }
+
+  return (
+    <>
+      <Navbar />
+      <main className="flex-1">
+        <PeerReview />
       </main>
       <Footer />
     </>
@@ -51,6 +80,7 @@ export default function App() {
             <Route path="/" element={<Landing />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/cham-ho/:token" element={<RequirePeerReviewAuth />} />
             <Route path="/app/*" element={<ProtectedApp />} />
           </Routes>
         </div>

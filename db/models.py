@@ -158,6 +158,12 @@ class SelfPracticeSessionORM(Base):
     self_notes: Mapped[list["SelfNoteORM"]] = relationship(
         back_populates="session", cascade="all, delete-orphan"
     )
+    peer_review_invites: Mapped[list["PeerReviewInviteORM"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan"
+    )
+    peer_notes: Mapped[list["PeerNoteORM"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan"
+    )
     owner: Mapped["UserORM | None"] = relationship(back_populates="sessions")
 
 
@@ -186,6 +192,98 @@ class SelfNoteORM(Base):
     )
 
     session: Mapped["SelfPracticeSessionORM"] = relationship(back_populates="self_notes")
+
+
+# ---------------------------------------------------------------------------
+# Peer review (Nhom C) -- the plan's only independent-judgment data source,
+# see models/peer_review.py for the full rationale.
+# ---------------------------------------------------------------------------
+
+
+class PeerReviewStatus(str, enum.Enum):
+    """Lifecycle of one "nhờ bạn chấm hộ" invite."""
+
+    PENDING = "pending"
+    COMPLETED = "completed"
+    EXPIRED = "expired"
+    REVOKED = "revoked"
+
+
+class PeerReviewInviteORM(Base):
+    """
+    Mirrors `models.peer_review.PeerReviewInvite`.
+
+    `token` (not `id`) is what a rater's link contains -- a separate,
+    unguessable value so an invite link never doubles as a way to enumerate
+    or guess a session's UUID.
+    """
+
+    __tablename__ = "peer_review_invites"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("self_practice_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # SET NULL, not CASCADE: mirrors self_practice_sessions.user_id -- an
+    # invite record should survive even if the inviter's account row ever
+    # went away, though in practice accounts are only ever locked, never
+    # deleted (see UserORM).
+    inviter_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    token: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    status: Mapped[PeerReviewStatus] = mapped_column(
+        Enum(PeerReviewStatus, name="peer_review_status", values_callable=lambda obj: [e.value for e in obj]),
+        nullable=False,
+        default=PeerReviewStatus.PENDING,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    session: Mapped["SelfPracticeSessionORM"] = relationship(back_populates="peer_review_invites")
+    peer_notes: Mapped[list["PeerNoteORM"]] = relationship(
+        back_populates="invite", cascade="all, delete-orphan"
+    )
+
+
+class PeerNoteORM(Base):
+    """
+    Mirrors `models.peer_review.PeerNote`. Two kinds of row share this
+    table -- see the module docstring in `models/peer_review.py` for why
+    `mark_sec` (nullable) is what tells them apart, and why this is a
+    separate table from `self_notes`/`presentation_events` rather than a
+    shared one with a `source` column.
+    """
+
+    __tablename__ = "peer_notes"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("self_practice_sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    rater_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    invite_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("peer_review_invites.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    mark_sec: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Always True today: the API never reveals machine results before the
+    # rubric row is submitted, so every row created through this flow is
+    # necessarily blind. Exists so a future "B can comment after reveal too"
+    # feature has somewhere to record that those rows are NOT calibration
+    # data, without a migration -- see models/peer_review.py.
+    created_before_reveal: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    rubric_scores: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    text: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    session: Mapped["SelfPracticeSessionORM"] = relationship(back_populates="peer_notes")
+    invite: Mapped["PeerReviewInviteORM"] = relationship(back_populates="peer_notes")
 
 
 # ---------------------------------------------------------------------------

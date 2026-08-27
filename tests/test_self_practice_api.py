@@ -263,7 +263,7 @@ class TestSelfPracticeVideoStreaming:
     """
     Regression: a plain `<video src>` is a browser-issued GET that can never
     carry a custom `Authorization` header, so the video route must also
-    accept the token as a `?token=` query param (routers/deps.py's
+    accept the token as a `?access_token=` query param (routers/deps.py's
     get_current_user_from_header_or_query) -- header-only auth would make
     every recording unwatchable the moment B4 required a token on this
     route too.
@@ -277,11 +277,11 @@ class TestSelfPracticeVideoStreaming:
         assert resp.status_code == 200
 
     def test_owner_can_stream_via_a_query_token_with_no_header_at_all(self, client, tmp_path):
-        """This is exactly what a real <video src="...?token=..."> sends."""
+        """This is exactly what a real <video src="...?access_token=..."> sends."""
         token = _register(client)
         session_id = _create_session(client, token, tmp_path).json()["id"]
 
-        resp = client.get(f"/self-practice/{session_id}/video?token={token}")
+        resp = client.get(f"/self-practice/{session_id}/video?access_token={token}")
         assert resp.status_code == 200
 
     def test_streaming_with_neither_header_nor_query_token_is_401(self, client, tmp_path):
@@ -390,7 +390,7 @@ class TestSelfPracticeOwnership:
         _, session_id = self._owned_session(client, tmp_path)
         other_token = _register(client, email="b@example.com")
 
-        resp = client.get(f"/self-practice/{session_id}/video?token={other_token}")
+        resp = client.get(f"/self-practice/{session_id}/video?access_token={other_token}")
         assert resp.status_code == 403
 
     def test_deleting_someone_else_s_session_is_403(self, client, tmp_path):

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { House, List, ShieldCheck, SignOut, VideoCamera, X } from '@phosphor-icons/react'
+import { ChartLine, House, List, ShieldCheck, SignOut, VideoCamera, X } from '@phosphor-icons/react'
 import { useAuth } from '../../contexts/AuthContext'
 import { cn } from '../../lib/utils'
 
@@ -9,7 +9,10 @@ const BASE_NAV_LINKS = [
   { to: '/app/luyen-tap', label: 'Tự luyện', icon: VideoCamera },
 ]
 
-const ADMIN_NAV_LINK = { to: '/app/admin/users', label: 'Quản trị', icon: ShieldCheck }
+const ADMIN_NAV_LINKS = [
+  { to: '/app/admin/users', label: 'Quản trị', icon: ShieldCheck },
+  { to: '/app/admin/quality', label: 'Chất lượng', icon: ChartLine },
+]
 
 export default function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -17,7 +20,7 @@ export default function Navbar() {
   const navigate = useNavigate()
   const { user, logout } = useAuth()
 
-  const navLinks = user?.is_admin ? [...BASE_NAV_LINKS, ADMIN_NAV_LINK] : BASE_NAV_LINKS
+  const navLinks = user?.is_admin ? [...BASE_NAV_LINKS, ...ADMIN_NAV_LINKS] : BASE_NAV_LINKS
 
   function handleLogout() {
     logout()

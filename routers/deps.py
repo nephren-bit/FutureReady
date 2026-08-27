@@ -88,20 +88,27 @@ def get_current_user(
 
 def get_current_user_from_header_or_query(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
-    token: str | None = Query(
-        None, description="Access token, for callers that can't set a header (e.g. <video src>)."
+    access_token: str | None = Query(
+        None,
+        alias="access_token",
+        description="Access token, for callers that can't set a header (e.g. <video src>).",
     ),
     db: DBSession = Depends(get_db),
 ) -> UserORM:
     """
-    Same as `get_current_user`, but also accepts the token as a `token`
-    query parameter. A plain `<video src>`/`<a href>` is a browser-issued
-    GET that never carries a custom `Authorization` header, so
-    `routers/self_practice.py`'s video-streaming route -- the one place a
-    real `<video>` element points straight at this API -- uses this instead.
-    Every other route stays header-only.
+    Same as `get_current_user`, but also accepts the token as an
+    `access_token` query parameter. A plain `<video src>`/`<a href>` is a
+    browser-issued GET that never carries a custom `Authorization` header,
+    so the self-practice and peer-review video-streaming routes -- the
+    only places a real `<video>` element points straight at this API --
+    use this instead. Every other route stays header-only.
+
+    Named `access_token`, not `token`, specifically so it can never collide
+    with a route's own path/query parameter also called `token` (e.g.
+    `/peer-review/invites/{token}/video` -- FastAPI raises at startup if a
+    dependency's parameter name shadows a path parameter's).
     """
-    raw_token = credentials.credentials if credentials is not None else token
+    raw_token = credentials.credentials if credentials is not None else access_token
     return _authenticate(raw_token, db)
 
 
