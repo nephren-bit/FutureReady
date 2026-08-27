@@ -55,8 +55,15 @@ là một luồng auth CRUD tiêu chuẩn, rủi ro/độ mới thấp, không c
 | B5 | [tdd:skip:ui-behavior-covered-by-manual-check] Frontend: `pages/Login.tsx`, `pages/Register.tsx`; JWT lưu `localStorage`, gắn `Authorization: Bearer` vào mọi request `lib/api.ts`; route `/app/*` chuyển hướng `/login` nếu chưa đăng nhập; `Navbar.tsx` thêm nút đăng xuất. | `npm run build` sạch; thử thủ công: chưa đăng nhập vào `/app` bị đẩy về `/login`; đăng ký → vào thẳng `/app`; đăng xuất → gọi lại API tự luyện trả 401 và bị đẩy về `/login`. | B2 | cc:完了 (chưa commit — chờ người dùng duyệt commit theo quy định phiên; `npm run build` sạch, chưa test thủ công trên trình duyệt thật — cần người dùng xác nhận luồng UI trước khi coi là kiểm chứng đầy đủ) |
 | B6 | [tdd:skip:read-only-admin-screen] `pages/AdminUsers.tsx` (route `/app/admin/users`, chỉ hiện khi `is_admin`): danh sách + tìm kiếm theo email, khoá/mở khoá qua `is_active`. `routers/admin.py`: `GET /admin/users`, `PATCH /admin/users/{id}` (chỉ đổi `is_active`, không có xoá). **Khoá có hiệu lực ngay với token đang sống**: dependency xác thực đọc `is_active` từ DB mỗi request (xem "Quyết định bổ sung từ advisor consult"). | `pytest` xanh: khoá tài khoản (`is_active=false`) → tài khoản đó login trả 401 với thông báo rõ (không nhầm với sai mật khẩu), **và token đã phát hành trước khi khoá gọi API tự luyện cũng nhận 401 ngay**; lịch sử `self_practice_sessions` của tài khoản đó vẫn còn nguyên trong DB sau khi khoá. | B3 | cc:完了 (chưa commit — chờ người dùng duyệt commit theo quy định phiên; backend TDD Red→Green — 121/121 test xanh bao gồm case khoá tức thời + lịch sử không mất; `npm run build` frontend sạch, phần UI chưa test thủ công trên trình duyệt thật) |
 
-Task 14 (bảng theo dõi chất lượng): **blocked** — phụ thuộc `PeerNote` (Nhóm
-C), chưa tồn tại. Không đưa vào Plans này.
+Task 14 (bảng theo dõi chất lượng): **XONG** — làm sau khi Nhóm C (Task
+15-17) hoàn tất và mở khoá `PeerNote`. Không nằm trong bảng B1-B6 ở trên
+(ngoài phạm vi ban đầu của Plans này), nhưng ghi lại ở đây cho đủ: `services/
+quality_tracking.py` (đối chiếu `PeerNote` blind + `COMPLETED` với
+`PresentationEvent` theo cửa sổ dung sai, loại trừ `created_before_reveal =
+false`), `routers/quality.py` (`GET /admin/quality-report`, admin-only),
+`pages/AdminQuality.tsx` (`/app/admin/quality`). 17/17 test mới xanh
+(`test_quality_tracking.py` + `test_quality_api.py`), gộp vào Task 18 của
+Nhóm C vì cùng một tính năng.
 
 ## Quyết định bổ sung từ advisor consult (trước khi làm B1)
 
