@@ -204,7 +204,7 @@ export default function SessionReview() {
           <ArrowLeft className="h-4 w-4" />
           Quay lại
         </Link>
-        <div className="rounded-xl border border-error/20 bg-error-light p-8 text-center">
+        <div role="alert" className="rounded-xl border border-error/20 bg-error-light p-8 text-center">
           <Warning className="h-10 w-10 text-error mx-auto mb-3" weight="bold" />
           <p className="text-sm font-medium text-error">{fetchError || 'Không tìm thấy phiên'}</p>
         </div>
@@ -303,7 +303,7 @@ export default function SessionReview() {
               Ghi chú tự xem lại
             </h3>
 
-            {noteError && <p className="mb-3 text-xs text-error">{noteError}</p>}
+            {noteError && <p role="alert" className="mb-3 text-xs text-error">{noteError}</p>}
 
             <div className="flex items-center gap-2 mb-4">
               <span className="text-xs font-mono text-text-muted shrink-0">{Math.round(currentSec)}s</span>
@@ -344,10 +344,22 @@ export default function SessionReview() {
                           onChange={e => setEditingText(e.target.value)}
                           className="flex-1 rounded border border-border bg-surface px-2 py-1 text-xs text-text-primary"
                         />
-                        <button type="button" onClick={handleSaveEdit} className="text-success">
+                        <button
+                          type="button"
+                          onClick={handleSaveEdit}
+                          aria-label="Lưu ghi chú"
+                          title="Lưu"
+                          className="rounded-md p-1.5 text-success hover:bg-success-light"
+                        >
                           <Check className="h-4 w-4" weight="bold" />
                         </button>
-                        <button type="button" onClick={() => setEditingNoteId(null)} className="text-text-muted">
+                        <button
+                          type="button"
+                          onClick={() => setEditingNoteId(null)}
+                          aria-label="Huỷ chỉnh sửa"
+                          title="Huỷ"
+                          className="rounded-md p-1.5 text-text-muted hover:bg-surface-elevated"
+                        >
                           <X className="h-4 w-4" weight="bold" />
                         </button>
                       </>
@@ -356,13 +368,21 @@ export default function SessionReview() {
                         <span className={cn('flex-1 text-sm text-text-primary', !note.text && 'italic text-text-muted')}>
                           {note.text || '(trống)'}
                         </span>
-                        <button type="button" onClick={() => startEditing(note)} className="text-text-muted hover:text-accent">
+                        <button
+                          type="button"
+                          onClick={() => startEditing(note)}
+                          aria-label="Sửa ghi chú"
+                          title="Sửa"
+                          className="rounded-md p-1.5 text-text-muted hover:bg-surface-elevated hover:text-accent"
+                        >
                           <PencilSimple className="h-4 w-4" />
                         </button>
                         <button
                           type="button"
                           onClick={() => handleDeleteNote(note.note_id)}
-                          className="text-text-muted hover:text-error"
+                          aria-label="Xoá ghi chú"
+                          title="Xoá"
+                          className="rounded-md p-1.5 text-text-muted hover:bg-error-light hover:text-error"
                         >
                           <Trash className="h-4 w-4" />
                         </button>
@@ -384,7 +404,7 @@ export default function SessionReview() {
               nộp xong đánh giá.
             </p>
 
-            {inviteError && <p className="mb-3 text-xs text-error">{inviteError}</p>}
+            {inviteError && <p role="alert" className="mb-3 text-xs text-error">{inviteError}</p>}
 
             <button
               type="button"

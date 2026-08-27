@@ -95,7 +95,7 @@ export default function PeerReview() {
           : fetchErrorDetail || 'Có lỗi xảy ra.'
     return (
       <div className="max-w-3xl mx-auto px-6 py-16">
-        <div className="rounded-xl border border-error/20 bg-error-light p-8 text-center">
+        <div role="alert" className="rounded-xl border border-error/20 bg-error-light p-8 text-center">
           <Warning className="h-10 w-10 text-error mx-auto mb-3" weight="bold" />
           <p className="text-sm font-medium text-error">{message}</p>
         </div>
@@ -144,7 +144,7 @@ export default function PeerReview() {
       {isPending && (
         <div className="rounded-xl border border-border bg-surface p-5 mb-6">
           <h3 className="text-sm font-semibold text-text-primary mb-4">Đánh dấu một điểm đáng chú ý</h3>
-          {markError && <p className="mb-3 text-xs text-error">{markError}</p>}
+          {markError && <p role="alert" className="mb-3 text-xs text-error">{markError}</p>}
           <div className="flex items-center gap-2 mb-4">
             <span className="text-xs font-mono text-text-muted shrink-0">{Math.round(currentSec)}s</span>
             <input
@@ -183,7 +183,7 @@ export default function PeerReview() {
           </h3>
           <p className="mb-4 text-xs text-text-muted">Nộp xong sẽ hiện ngay kết quả máy đo được -- không sửa lại được sau đó.</p>
 
-          {submitError && <p className="mb-3 text-xs text-error">{submitError}</p>}
+          {submitError && <p role="alert" className="mb-3 text-xs text-error">{submitError}</p>}
 
           <div className="space-y-4 mb-4">
             {RUBRIC_CRITERIA.map(criterion => (

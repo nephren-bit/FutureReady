@@ -1,8 +1,23 @@
 import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { ChartLine, House, List, ShieldCheck, SignOut, VideoCamera, X } from '@phosphor-icons/react'
+import {
+  ChartLine,
+  Desktop,
+  House,
+  List,
+  Moon,
+  ShieldCheck,
+  SignOut,
+  Sun,
+  VideoCamera,
+  X,
+} from '@phosphor-icons/react'
 import { useAuth } from '../../contexts/AuthContext'
+import { useTheme } from '../../contexts/ThemeContext'
 import { cn } from '../../lib/utils'
+
+const THEME_ICON = { system: Desktop, light: Sun, dark: Moon } as const
+const THEME_LABEL = { system: 'Theo hệ thống', light: 'Sáng', dark: 'Tối' } as const
 
 const BASE_NAV_LINKS = [
   { to: '/app', label: 'Bảng điều khiển', icon: List },
@@ -18,6 +33,8 @@ export default function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const location = useLocation()
   const { user, logout } = useAuth()
+  const { theme, cycleTheme } = useTheme()
+  const ThemeIcon = THEME_ICON[theme]
 
   const navLinks = user?.is_admin ? [...BASE_NAV_LINKS, ...ADMIN_NAV_LINKS] : BASE_NAV_LINKS
 
@@ -72,8 +89,17 @@ export default function Navbar() {
           ))}
         </ul>
 
-        <div className="hidden items-center gap-3 sm:flex">
-          {user && <span className="text-sm text-text-secondary dark:text-text-secondary-dark">{user.full_name}</span>}
+        <div className="hidden items-center gap-1 sm:flex">
+          {user && <span className="mr-2 text-sm text-text-secondary dark:text-text-secondary-dark">{user.full_name}</span>}
+          <button
+            type="button"
+            onClick={cycleTheme}
+            aria-label={`Giao diện: ${THEME_LABEL[theme]}. Bấm để đổi.`}
+            title={`Giao diện: ${THEME_LABEL[theme]}`}
+            className="flex h-9 w-9 items-center justify-center rounded-lg text-text-secondary dark:text-text-secondary-dark hover:bg-surface-elevated dark:hover:bg-surface-elevated-dark"
+          >
+            <ThemeIcon className="h-4 w-4" weight="bold" />
+          </button>
           <button
             type="button"
             onClick={handleLogout}
@@ -84,18 +110,29 @@ export default function Navbar() {
           </button>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setMobileOpen(!mobileOpen)}
-          className="flex h-10 w-10 items-center justify-center rounded-lg text-text-secondary dark:text-text-secondary-dark hover:bg-surface-elevated dark:hover:bg-surface-elevated-dark sm:hidden"
-          aria-label={mobileOpen ? 'Đóng menu' : 'Mở menu'}
-        >
-          {mobileOpen ? (
-            <X className="h-5 w-5" weight="bold" />
-          ) : (
-            <List className="h-5 w-5" weight="bold" />
-          )}
-        </button>
+        <div className="flex items-center gap-1 sm:hidden">
+          <button
+            type="button"
+            onClick={cycleTheme}
+            aria-label={`Giao diện: ${THEME_LABEL[theme]}. Bấm để đổi.`}
+            title={`Giao diện: ${THEME_LABEL[theme]}`}
+            className="flex h-10 w-10 items-center justify-center rounded-lg text-text-secondary dark:text-text-secondary-dark hover:bg-surface-elevated dark:hover:bg-surface-elevated-dark"
+          >
+            <ThemeIcon className="h-4 w-4" weight="bold" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setMobileOpen(!mobileOpen)}
+            className="flex h-10 w-10 items-center justify-center rounded-lg text-text-secondary dark:text-text-secondary-dark hover:bg-surface-elevated dark:hover:bg-surface-elevated-dark"
+            aria-label={mobileOpen ? 'Đóng menu' : 'Mở menu'}
+          >
+            {mobileOpen ? (
+              <X className="h-5 w-5" weight="bold" />
+            ) : (
+              <List className="h-5 w-5" weight="bold" />
+            )}
+          </button>
+        </div>
       </nav>
 
       {mobileOpen && (

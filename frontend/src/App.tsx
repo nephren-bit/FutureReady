@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
+import { ThemeProvider } from './contexts/ThemeContext'
 import Navbar from './components/layout/Navbar'
 import Footer from './components/layout/Footer'
 import Landing from './pages/Landing'
@@ -73,18 +74,20 @@ function RequirePeerReviewAuth() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <div className="min-h-screen flex flex-col bg-bg dark:bg-bg-dark text-text-primary dark:text-text-primary-dark">
-          <Routes>
-            <Route path="/" element={<Landing />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
-            <Route path="/cham-ho/:token" element={<RequirePeerReviewAuth />} />
-            <Route path="/app/*" element={<ProtectedApp />} />
-          </Routes>
-        </div>
-      </BrowserRouter>
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <BrowserRouter>
+          <div className="min-h-screen flex flex-col bg-bg dark:bg-bg-dark text-text-primary dark:text-text-primary-dark">
+            <Routes>
+              <Route path="/" element={<Landing />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/register" element={<Register />} />
+              <Route path="/cham-ho/:token" element={<RequirePeerReviewAuth />} />
+              <Route path="/app/*" element={<ProtectedApp />} />
+            </Routes>
+          </div>
+        </BrowserRouter>
+      </AuthProvider>
+    </ThemeProvider>
   )
 }

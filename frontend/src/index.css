@@ -1,6 +1,18 @@
 @import "tailwindcss";
+/* Be Vietnam Pro - native Vietnamese font, supports all diacritics.
+   @import must precede every other statement (bar @charset/@layer), so
+   these live here now instead of after @layer utilities. */
+@import url("https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap");
+
+/* Selector-based dark mode: `dark:` utilities respond to `[data-theme="dark"]`
+   on <html> (set by ThemeContext.tsx), not just the OS preference. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 @theme {
+  /* Light values -- also the defaults for anyone with no stored choice and
+     no OS preference, and the `-dark` pairs some components (Navbar,
+     Footer, App.tsx) still address directly with `dark:bg-bg-dark` etc. */
   --color-bg: #fafafa;
   --color-bg-dark: #0a0a0a;
   --color-surface: #ffffff;
@@ -14,7 +26,7 @@
   --color-text-secondary: #525252;
   --color-text-secondary-dark: #a3a3a3;
   --color-text-muted: #737373;
-  --color-text-muted-dark: #737373;
+  --color-text-muted-dark: #a3a3a3;
   --color-accent: #2563eb;
   --color-accent-hover: #1d4ed8;
   --color-accent-light: #dbeafe;
@@ -29,12 +41,56 @@
   --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
 }
 
+/*
+ * Every page below used to hard-code the light values above through plain
+ * `bg-surface`/`text-text-primary` etc. utilities with no `dark:` prefix at
+ * all (only Navbar/Footer/App.tsx's shell bothered with `dark:*-dark`
+ * pairs) -- meaning most of the app rendered light-on-dark-chrome on a
+ * dark-mode OS. Re-pointing the SAME custom properties at dark values here,
+ * once, makes every existing `bg-surface`-style utility across the whole
+ * app theme-aware for free -- no per-page `dark:` prefix needed, and no
+ * page file below had to change. `:root:not([data-theme="light"])` under
+ * the media query, then `[data-theme="dark"]` unconditionally after it,
+ * gives the explicit choice (ThemeContext.tsx) priority in both directions
+ * over the OS default.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-bg: #0a0a0a;
+    --color-surface: #141414;
+    --color-surface-elevated: #1a1a1a;
+    --color-border: #262626;
+    --color-text-primary: #fafafa;
+    --color-text-secondary: #a3a3a3;
+    --color-text-muted: #a3a3a3;
+    --color-accent: #3b82f6;
+    --color-accent-hover: #60a5fa;
+    --color-accent-light: #1e3a5f;
+    --color-success-light: #052e16;
+    --color-warning-light: #3a2705;
+    --color-error-light: #3a0d0d;
+  }
+}
+
+:root[data-theme="dark"] {
+  --color-bg: #0a0a0a;
+  --color-surface: #141414;
+  --color-surface-elevated: #1a1a1a;
+  --color-border: #262626;
+  --color-text-primary: #fafafa;
+  --color-text-secondary: #a3a3a3;
+  --color-text-muted: #a3a3a3;
+  --color-accent: #3b82f6;
+  --color-accent-hover: #60a5fa;
+  --color-accent-light: #1e3a5f;
+  --color-success-light: #052e16;
+  --color-warning-light: #3a2705;
+  --color-error-light: #3a0d0d;
+}
+
 @layer base {
   * {
     border-color: var(--color-border);
-  }
-  .dark * {
-    border-color: var(--color-border-dark);
   }
   body {
     background: var(--color-bg);
@@ -44,9 +100,28 @@
     -moz-osx-font-smoothing: grayscale;
     margin: 0;
   }
-  .dark body {
-    background: var(--color-bg-dark);
-    color: var(--color-text-primary-dark);
+
+  /* A visible, deliberate focus ring on every operable control -- the
+     browser default outline is inconsistent across engines and clips
+     oddly against rounded-lg/rounded-xl corners used everywhere here.
+     `:focus-visible` (not `:focus`) so a mouse click never shows it, only
+     keyboard/switch-device navigation. */
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Tailwind's Preflight resets button cursor to the browser default
+     (an arrow, not a hand) -- every one of this app's ~30 <button>s relied
+     on that default until now. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+  button:disabled,
+  [aria-disabled="true"] {
+    cursor: not-allowed;
   }
 }
 
@@ -56,14 +131,15 @@
     backdrop-filter: blur(20px) saturate(180%);
     -webkit-backdrop-filter: blur(20px) saturate(180%);
   }
-  .dark .glass {
+  [data-theme="dark"] .glass {
     background: rgba(20, 20, 20, 0.72);
   }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .glass {
+      background: rgba(20, 20, 20, 0.72);
+    }
+  }
 }
-
-/* Be Vietnam Pro - native Vietnamese font, supports all diacritics */
-@import url("https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap");
-@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap");
 
 html {
   scroll-behavior: smooth;

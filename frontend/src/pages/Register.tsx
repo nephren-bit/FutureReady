@@ -51,7 +51,7 @@ export default function Register() {
         <p className="mt-1 text-sm text-text-secondary">Tạo tài khoản và vào luyện tập ngay.</p>
 
         {error && (
-          <div className="mt-4 rounded-lg border border-error/20 bg-error-light p-3 flex items-center gap-2">
+          <div role="alert" className="mt-4 rounded-lg border border-error/20 bg-error-light p-3 flex items-center gap-2">
             <Warning className="h-4 w-4 text-error shrink-0" weight="bold" />
             <p className="text-xs text-text-primary">{error}</p>
           </div>

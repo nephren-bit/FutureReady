@@ -120,7 +120,7 @@ export default function Dashboard() {
         )}
 
         {!loading && error && (
-          <div className="text-center py-16">
+          <div role="alert" className="text-center py-16">
             <Warning className="h-8 w-8 text-error mx-auto mb-3" weight="bold" />
             <p className="text-error text-sm mb-4">{error}</p>
             <button
@@ -174,45 +174,63 @@ export default function Dashboard() {
                 initial={{ opacity: 0, y: 16 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.3, delay: index * 0.05 }}
+                className="group relative"
               >
-                <Link
-                  to={`/app/phien/${session.id}`}
+                {/*
+                  The card used to BE the <Link> with the delete <button>
+                  nested inside it -- a button nested inside an <a> is
+                  invalid HTML and unreliable for keyboard/screen-reader
+                  users even though onClick's stopPropagation() made mouse
+                  clicks behave. The Link here is a "stretched link"
+                  (absolutely positioned, covers the whole card) so the card
+                  is still clickable everywhere, while the button is a true
+                  sibling -- both independently reachable by Tab.
+                */}
+                <div
                   className={cn(
-                    'block rounded-xl border border-border bg-surface p-5',
+                    'relative rounded-xl border border-border bg-surface p-5',
                     'transition-all duration-200',
-                    'hover:scale-[1.01] hover:shadow-md hover:border-border/80',
-                    'focus:outline-none focus:ring-2 focus:ring-accent/30 focus:ring-offset-2'
+                    'group-hover:scale-[1.01] group-hover:shadow-md group-hover:border-border/80'
                   )}
                 >
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <VideoCamera size={16} className="text-accent" />
-                      <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-medium bg-accent-light text-accent">
-                        {PROFILE_LABELS[session.profile] ?? session.profile}
+                  <Link to={`/app/phien/${session.id}`} className="absolute inset-0 z-0 rounded-xl">
+                    <span className="sr-only">
+                      Xem phiên {PROFILE_LABELS[session.profile] ?? session.profile} lúc {formatDate(session.created_at)}
+                    </span>
+                  </Link>
+
+                  <div className="relative z-10 pointer-events-none">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <VideoCamera size={16} className="text-accent" />
+                        <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-medium bg-accent-light text-accent">
+                          {PROFILE_LABELS[session.profile] ?? session.profile}
+                        </span>
+                      </div>
+                      <button
+                        onClick={(e) => handleDelete(e, session.id)}
+                        disabled={deletingId === session.id}
+                        className={cn(
+                          'pointer-events-auto p-1.5 rounded-md text-text-muted',
+                          'hover:text-error hover:bg-error-light transition-colors',
+                          'disabled:opacity-40 disabled:cursor-not-allowed'
+                        )}
+                        title="Xóa phiên"
+                        aria-label="Xóa phiên"
+                      >
+                        <Trash size={15} />
+                      </button>
+                    </div>
+
+                    <div className="mb-3">
+                      <span className={cn('inline-block px-2 py-0.5 rounded text-xs font-medium', stateColor(session.state))}>
+                        {STATE_LABELS[session.state]}
                       </span>
                     </div>
-                    <button
-                      onClick={(e) => handleDelete(e, session.id)}
-                      disabled={deletingId === session.id}
-                      className={cn(
-                        'p-1.5 rounded-md text-text-muted',
-                        'hover:text-error hover:bg-error-light transition-colors',
-                        'disabled:opacity-40 disabled:cursor-not-allowed'
-                      )}
-                      title="Xóa phiên"
-                    >
-                      <Trash size={15} />
-                    </button>
-                  </div>
 
-                  <div className="mb-3">
-                    <span className={cn('inline-block px-2 py-0.5 rounded text-xs font-medium', stateColor(session.state))}>
-                      {STATE_LABELS[session.state]}
-                    </span>
+                    <p className="text-xs text-text-muted">{formatDate(session.created_at)}</p>
                   </div>
-
-                  <p className="text-xs text-text-muted">{formatDate(session.created_at)}</p>
-                </Link>
+                </div>
               </motion.div>
             ))}
           </div>
