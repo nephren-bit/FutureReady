@@ -17,6 +17,7 @@ frames into the Layer 2 vision analyzers (`EmotionAnalyzer`,
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import numpy as np
@@ -28,9 +29,20 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 # Target number of frames to sample across the whole video for downstream
-# vision analyzers (emotion / face mesh). Sampling instead of decoding every
-# frame keeps analysis time bounded regardless of video length.
+# vision analyzers. Sampling instead of decoding every frame keeps analysis
+# time bounded regardless of video length. Only used as a floor when the
+# caller doesn't request a `min_sample_rate_hz` (see __init__) -- a fixed
+# frame count on a several-minutes-long self-practice recording samples far
+# below any context profile's `min_sample_rate_hz`, which is exactly the
+# "sampling too sparse" warning real recordings kept hitting.
 _DEFAULT_SAMPLE_COUNT = 60
+
+# Upper bound on how many frames `min_sample_rate_hz` may ask for, so an
+# unusually long recording degrades to a lower effective rate instead of
+# asking MediaPipe to process an unbounded number of frames in the
+# background task. 1800 frames at the profile's usual 1 Hz floor covers a
+# 30-minute recording -- generous for a self-practice session.
+_MAX_SAMPLE_COUNT = 1800
 
 # A frame-to-frame mean absolute pixel difference above this (0-255 scale)
 # is counted as an abrupt scene cut rather than ordinary motion.
@@ -40,14 +52,29 @@ _SCENE_CUT_THRESHOLD = 35.0
 class VideoExtractor(BaseExtractor[VideoFeature]):
     """Extracts structured data from a presentation video file (Layer 1)."""
 
-    def __init__(self, sample_count: int = _DEFAULT_SAMPLE_COUNT) -> None:
+    def __init__(
+        self,
+        sample_count: int = _DEFAULT_SAMPLE_COUNT,
+        min_sample_rate_hz: float | None = None,
+    ) -> None:
         """
         Args:
             sample_count: Number of frames to evenly sample across the video
                 for downstream analysis (motion/blur stats and, later,
-                vision analyzers).
+                vision analyzers). Used as-is when `min_sample_rate_hz` is
+                not given, and as a floor (never fewer samples than this)
+                when it is.
+            min_sample_rate_hz: When given, the actual sample count is
+                raised so the video is sampled at at least this many frames
+                per second of its own length (`ContextProfile.
+                frame_requirements.min_sample_rate_hz` -- pass the profile's
+                own number so a context that needs finer resolution samples
+                accordingly, capped at `_MAX_SAMPLE_COUNT`). A fixed
+                `sample_count` alone samples a 5-minute recording exactly as
+                sparsely as a 30-second one.
         """
         self._sample_count = sample_count
+        self._min_sample_rate_hz = min_sample_rate_hz
 
     def extract(self, file_path: Path) -> VideoFeature:
         """Run extraction and return only the structured `VideoFeature`."""
@@ -87,8 +114,9 @@ class VideoExtractor(BaseExtractor[VideoFeature]):
                 raise RuntimeError("Video file reports zero frames; it may be corrupt.")
 
             duration_sec = frame_count / fps if fps > 0 else 0.0
+            effective_sample_count = self._resolve_sample_count(duration_sec)
 
-            sample_indices = self._compute_sample_indices(frame_count)
+            sample_indices = self._compute_sample_indices(frame_count, effective_sample_count)
             frames: list[np.ndarray] = []
             timestamps: list[float] = []
 
@@ -127,9 +155,20 @@ class VideoExtractor(BaseExtractor[VideoFeature]):
         finally:
             capture.release()
 
-    def _compute_sample_indices(self, frame_count: int) -> list[int]:
+    def _resolve_sample_count(self, duration_sec: float) -> int:
+        """
+        `self._sample_count`, raised to hit `min_sample_rate_hz` if one was
+        given -- see `__init__`. Never lowers the caller's requested count,
+        so a short clip isn't sampled any thinner than before.
+        """
+        if not self._min_sample_rate_hz or duration_sec <= 0:
+            return self._sample_count
+        needed = math.ceil(duration_sec * self._min_sample_rate_hz)
+        return min(max(self._sample_count, needed), _MAX_SAMPLE_COUNT)
+
+    def _compute_sample_indices(self, frame_count: int, sample_count: int) -> list[int]:
         """Evenly space sample indices across the whole video."""
-        count = min(self._sample_count, frame_count)
+        count = min(sample_count, frame_count)
         if count <= 1:
             return [0]
         step = frame_count / count

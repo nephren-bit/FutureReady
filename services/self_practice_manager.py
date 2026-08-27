@@ -120,7 +120,12 @@ class SelfPracticeManager:
             profile = load_profile(session.profile)
             video_path = Path(session.video_file_path)
 
-            video_feature, frames, timestamps = VideoExtractor().extract_with_frames(video_path)
+            # A fixed sample count samples a 5-minute recording exactly as
+            # sparsely as a 30-second one -- ask for the profile's own
+            # minimum sampling rate instead (see VideoExtractor.__init__).
+            video_feature, frames, timestamps = VideoExtractor(
+                min_sample_rate_hz=profile.frame_requirements.min_sample_rate_hz
+            ).extract_with_frames(video_path)
             pose = PoseAnalyzer(profile).analyze(list(zip(frames, timestamps)), source_fps=video_feature.fps)
             events = EventDetector(profile).detect(session_id=str(session_id), pose=pose)
 

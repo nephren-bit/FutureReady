@@ -287,7 +287,8 @@ class PoseAnalyzer(BaseAnalyzer[list[tuple[np.ndarray, float]], PoseFeature]):
             sampling_warning = (
                 f"Tần số lấy mẫu {sampling_rate:.2f} khung hình/giây thấp hơn mức tối thiểu "
                 f"{minimum_rate:.2f} của hồ sơ '{self._profile.profile}'. Các sự kiện ngắn có "
-                "thể bị bỏ sót; tăng VIDEO_SAMPLE_FRAME_COUNT để lấy mẫu dày hơn."
+                "thể bị bỏ sót -- bản ghi có thể quá dài so với mức lấy mẫu tối đa cho phép "
+                "(xem extractors/video_extractor.py, _MAX_SAMPLE_COUNT)."
             )
             logger.warning(sampling_warning)
 

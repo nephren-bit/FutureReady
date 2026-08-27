@@ -139,10 +139,19 @@ def find_video_file(videos_dir: Path, video_id: str) -> Path | None:
 
 
 def run_pipeline_on(video_path: Path, profile_name: str) -> list[PresentationEvent]:
-    """The same three-stage chain as scripts/check_pose_pipeline.py, on one file."""
+    """
+    The same three-stage chain as scripts/check_pose_pipeline.py and
+    services/self_practice_manager.py, on one file. Sampling at the
+    profile's own `min_sample_rate_hz` matters more here than anywhere else
+    in the codebase: an accuracy figure measured against a too-sparsely
+    sampled recording just reports how often the sampling happened to line
+    up with a human mark, not whether the thresholds are right.
+    """
     profile = load_profile(profile_name)
-    _video_feature, frames, timestamps = VideoExtractor().extract_with_frames(video_path)
-    pose = PoseAnalyzer(profile).analyze(list(zip(frames, timestamps)))
+    video_feature, frames, timestamps = VideoExtractor(
+        min_sample_rate_hz=profile.frame_requirements.min_sample_rate_hz
+    ).extract_with_frames(video_path)
+    pose = PoseAnalyzer(profile).analyze(list(zip(frames, timestamps)), source_fps=video_feature.fps)
     return EventDetector(profile).detect(session_id=video_path.stem, pose=pose)
 
 
