@@ -32,3 +32,8 @@ err.log
 
 docs/
 specs/
+
+# Claude Code Harness bookkeeping (session ids, PIDs, usage stats, session log -- no secrets, but not project source)
+.claude/sessions/
+.claude/state/
+.claude/memory/

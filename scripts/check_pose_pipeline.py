@@ -74,7 +74,7 @@ def main(argv: list[str]) -> int:
         f"{video_feature.width}x{video_feature.height}"
     )
 
-    pose = PoseAnalyzer(profile).analyze(list(zip(frames, timestamps)))
+    pose = PoseAnalyzer(profile).analyze(list(zip(frames, timestamps)), source_fps=video_feature.fps)
 
     print()
     print("--- Task 1: nhận diện người ---")
