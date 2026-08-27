@@ -4,7 +4,7 @@ export default function Footer() {
       <div className="mx-auto flex max-w-6xl flex-col items-center gap-3 px-4 sm:px-6">
         <div className="flex items-center gap-2">
           <span className="text-lg font-semibold text-text-primary dark:text-text-primary-dark">
-            EmpathAI
+            FutureReady
           </span>
           <span className="h-2 w-2 rounded-full bg-accent" />
         </div>
@@ -12,7 +12,7 @@ export default function Footer() {
           Huấn luyện giao tiếp AI-powered
         </p>
         <p className="text-xs text-text-muted dark:text-text-muted-dark">
-          &copy; {new Date().getFullYear()} EmpathAI. All rights reserved.
+          &copy; {new Date().getFullYear()} FutureReady. All rights reserved.
         </p>
       </div>
     </footer>

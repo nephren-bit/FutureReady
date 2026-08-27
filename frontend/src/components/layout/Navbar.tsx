@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { ChartLine, House, List, ShieldCheck, SignOut, VideoCamera, X } from '@phosphor-icons/react'
 import { useAuth } from '../../contexts/AuthContext'
 import { cn } from '../../lib/utils'
@@ -17,14 +17,23 @@ const ADMIN_NAV_LINKS = [
 export default function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const location = useLocation()
-  const navigate = useNavigate()
   const { user, logout } = useAuth()
 
   const navLinks = user?.is_admin ? [...BASE_NAV_LINKS, ...ADMIN_NAV_LINKS] : BASE_NAV_LINKS
 
   function handleLogout() {
     logout()
-    navigate('/login', { replace: true })
+    // A hard navigation, not react-router's navigate(): ProtectedApp/
+    // RequirePeerReviewAuth's own "redirect to /login if unauthenticated"
+    // guard can still be mid-render on the page we're leaving when this
+    // fires (its isAuthenticated check flips false in the same update as
+    // this call), and its own `replace` navigate then wins the race,
+    // stamping /login's history state with `from: <the page we just left>`.
+    // The next person to log in on this browser -- not necessarily the
+    // same account -- would land back on that page instead of /app. A
+    // full reload sidesteps the race entirely: there is no in-flight
+    // React tree left to fire a second, conflicting redirect.
+    window.location.assign('/login')
   }
 
   function isActive(to: string) {
@@ -40,7 +49,7 @@ export default function Navbar() {
           className="flex items-center gap-2 text-lg font-semibold text-text-primary dark:text-text-primary-dark"
         >
           <House className="h-5 w-5 text-text-muted dark:text-text-muted-dark" weight="fill" />
-          <span>EmpathAI</span>
+          <span>FutureReady</span>
           <span className="h-2 w-2 rounded-full bg-accent" />
         </Link>
 

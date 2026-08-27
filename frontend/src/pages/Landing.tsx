@@ -365,14 +365,14 @@ function LandingFooter() {
         <div className="flex items-center gap-2">
           <Sparkle className="w-4 h-4 text-accent" weight="fill" />
           <span className="text-sm font-semibold text-text-primary-dark">
-            EmpathAI
+            FutureReady
           </span>
         </div>
         <p className="text-sm text-text-secondary-dark">
           Tự luyện thuyết trình &amp; phỏng vấn, không chấm điểm.
         </p>
         <p className="text-xs text-text-secondary-dark/60">
-          &copy; 2024 EmpathAI
+          &copy; 2024 FutureReady
         </p>
       </div>
     </footer>

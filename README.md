@@ -1,4 +1,4 @@
-# FutureReady (EmpathAI)
+# FutureReady
 
 FutureReady is an AI-powered communication-coaching platform. It runs two
 evaluation workflows — **Presentation** (slides + video) and **Interview**
