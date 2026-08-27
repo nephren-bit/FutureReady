@@ -4,8 +4,11 @@ services/self_practice_manager.py
 Orchestrates the self-practice flow (specs/in-class-analysis): a person
 records themselves with a webcam, the pipeline already built for Tasks 1-3/5
 (`VideoExtractor` -> `PoseAnalyzer` -> `EventDetector`) runs on it once in the
-background, and the result is a set of `PresentationEvent`s plus whatever
-`SelfNote`s the person adds while reviewing.
+background, alongside a second, independent pass over the same recording's
+audio track (`AudioExtractor` -> `VoiceAnalyzer` -> the same `EventDetector`
+again, see `_detect_voice_events`), and the result is one combined set of
+`PresentationEvent`s (pose and voice mixed together, ordinary event rows
+either way) plus whatever `SelfNote`s the person adds while reviewing.
 
 This is the only pipeline in the codebase: it never computes a total score,
 which is this product's core principle, and there is no separate
@@ -24,10 +27,14 @@ from pathlib import Path
 from sqlalchemy.orm import Session as DBSession
 
 from analyzers.pose_analyzer import PoseAnalyzer
+from analyzers.voice_analyzer import VoiceAnalyzer, transcribe_with_whisper
 from db.models import SelfNoteORM, SelfPracticeSessionORM, SelfPracticeState
 from events.detector import EventDetector
+from extractors.audio_extractor import AudioExtractionError, AudioExtractor
 from extractors.video_extractor import VideoExtractor
+from models.events import PresentationEvent
 from models.notes import SelfNote
+from models.profiles import ContextProfile
 from services.profile_loader import load_profile
 from services.session_mappers import (
     orm_to_pose,
@@ -122,10 +129,12 @@ class SelfPracticeManager:
 
     def run_pipeline(self, db: DBSession, session_id: uuid.UUID) -> None:
         """
-        Run VideoExtractor -> PoseAnalyzer -> EventDetector once and persist
-        the result. Never raises: any failure is caught and stored on the
-        session row as FAILED + `error_message`, matching every other
-        background-task pattern in this codebase (see
+        Run VideoExtractor -> PoseAnalyzer -> EventDetector once, then the
+        same for voice (VideoExtractor's audio track -> VoiceAnalyzer ->
+        the same EventDetector, run a second time -- see `_detect_voice_events`),
+        and persist the combined result. Never raises: any failure is caught
+        and stored on the session row as FAILED + `error_message`, matching
+        every other background-task pattern in this codebase (see
         `routers/sessions.py`'s `_background_run_*` wrappers) so one bad
         recording can't crash the worker.
         """
@@ -141,7 +150,9 @@ class SelfPracticeManager:
                 min_sample_rate_hz=profile.frame_requirements.min_sample_rate_hz
             ).extract_with_frames(video_path)
             pose = PoseAnalyzer(profile).analyze(list(zip(frames, timestamps)), source_fps=video_feature.fps)
-            events = EventDetector(profile).detect(session_id=str(session_id), pose=pose)
+            detector = EventDetector(profile)
+            events = detector.detect(str(session_id), pose)
+            events += self._detect_voice_events(detector, profile, video_path, video_feature.fps, session_id)
 
             db.add(pose_to_orm(session_id, pose))
             for event in events:
@@ -156,6 +167,43 @@ class SelfPracticeManager:
             session.state = SelfPracticeState.FAILED
             session.error_message = str(exc)
             db.commit()
+
+    def _detect_voice_events(
+        self,
+        detector: EventDetector,
+        profile: ContextProfile,
+        video_path: Path,
+        source_fps: float,
+        session_id: uuid.UUID,
+    ) -> list[PresentationEvent]:
+        """
+        Voice analysis is best-effort: a recording with no audio track, or a
+        transcription failure, must not fail the whole session -- the pose
+        events are already a complete, useful result on their own. Runs the
+        *same* `EventDetector` instance used for pose a second time against
+        a `VoiceFeature` (see events/detector.py's module docstring for why
+        that is enough to make voice rules fire and pose rules skip, with no
+        voice-specific code in the detector itself).
+        """
+        try:
+            audio_feature, samples = AudioExtractor().extract_with_samples(video_path)
+        except AudioExtractionError as exc:
+            logger.info("Session %s: voice analysis skipped -- %s", session_id, exc)
+            return []
+
+        try:
+            voice = VoiceAnalyzer(profile).analyze(
+                samples,
+                audio_feature.sample_rate,
+                audio_feature.duration_sec,
+                source_fps=source_fps,
+                transcribe_fn=transcribe_with_whisper,
+            )
+        except Exception:  # noqa: BLE001 -- best-effort, see docstring
+            logger.exception("Session %s: voice analysis failed", session_id)
+            return []
+
+        return detector.detect(str(session_id), voice)
 
     # ------------------------------------------------------------------
     # Review data

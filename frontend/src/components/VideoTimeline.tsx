@@ -29,6 +29,9 @@ export const EVENT_COLORS: Record<string, string> = {
   E_HEAD_UP: 'bg-success',
   E_GESTURE: 'bg-accent',
   E_POSTURAL_SWAY_SPIKE: 'bg-warning',
+  E_LONG_SILENCE: 'bg-warning',
+  E_LOW_VOLUME: 'bg-warning',
+  E_FILLER_WORD: 'bg-accent',
 }
 
 function pct(sec: number, durationSec: number): number {

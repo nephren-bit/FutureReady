@@ -34,12 +34,22 @@ A rule is skipped entirely when any metric it declares came back not
 measured. Not "treated as zero" — skipped. The reviewer sees the metric
 marked `không đo được` with its reason, which is honest, instead of an event
 list quietly built on landmarks the camera never saw.
+
+`EventDetector.detect()` takes a `PoseFeature` or a `VoiceFeature`
+(models/features.py) -- nothing here is written against either type
+specifically, only against "something with a `.series` of timestamped
+samples exposing `.is_valid`/`.signals`, and a `.metric(name)`". A rule
+whose `requires_metrics` names a metric the OTHER analyzer produces just
+finds it absent and is skipped for this call, so one profile's `events:`
+block can freely mix pose rules and voice rules -- `services/
+self_practice_manager.py` calls `detect()` twice, once per feature, and
+concatenates the two event lists.
 """
 
 from __future__ import annotations
 
 from models.events import PresentationEvent
-from models.features import PoseFeature, PoseFrameSample
+from models.features import PoseFeature, PoseFrameSample, VoiceFeature, VoiceFrameSample
 from models.profiles import ContextProfile
 from services.profile_loader import load_profile
 from utils.logger import get_logger
@@ -69,24 +79,31 @@ class EventDetector:
         """The profile whose thresholds this detector applies."""
         return self._profile
 
-    def detect(self, session_id: str, pose: PoseFeature) -> list[PresentationEvent]:
+    def detect(self, session_id: str, feature: PoseFeature | VoiceFeature) -> list[PresentationEvent]:
         """
         Args:
             session_id: Session these events belong to.
-            pose: The analyzed recording, including its per-frame `series`.
+            feature: The analyzed recording, including its per-frame/per-window
+                `series` -- a `PoseFeature` or a `VoiceFeature`. Call this
+                twice, once per feature, to get both pose and voice events;
+                see `services/self_practice_manager.py`. A rule whose
+                `requires_metrics` names a metric the other analyzer
+                produces is silently skipped here (see `EventRule.
+                unmet_metrics`), so running the full rule set against either
+                feature never double-fires or crashes on the other's rules.
 
         Returns:
             Every detected event, ordered by start time. Empty when the
             profile carries no calibrated thresholds, or when no metric the
             rules need was measurable.
         """
-        if not pose.series:
-            logger.info("No pose time series for session %s; no events detected.", session_id)
+        if not feature.series:
+            logger.info("No time series for session %s; no events detected.", session_id)
             return []
 
         events: list[PresentationEvent] = []
         for rule in self._rules:
-            unmet = rule.unmet_metrics(pose)
+            unmet = rule.unmet_metrics(feature)
             if unmet:
                 logger.info(
                     "Skipping rule %s for session %s: metric(s) not measurable in this recording: %s",
@@ -95,9 +112,9 @@ class EventDetector:
                     ", ".join(unmet),
                 )
                 continue
-            if not rule.applies_to(pose):
+            if not rule.applies_to(feature):
                 continue
-            events.extend(self._detect_one(session_id, rule, pose.series, pose.source_fps))
+            events.extend(self._detect_one(session_id, rule, feature.series, feature.source_fps))
 
         events.sort(key=lambda event: (event.start_sec, event.type))
         logger.info(
@@ -114,7 +131,11 @@ class EventDetector:
     # ------------------------------------------------------------------
 
     def _detect_one(
-        self, session_id: str, rule: EventRule, series: list[PoseFrameSample], source_fps: float
+        self,
+        session_id: str,
+        rule: EventRule,
+        series: list[PoseFrameSample | VoiceFrameSample],
+        source_fps: float,
     ) -> list[PresentationEvent]:
         """Run one rule end to end over the time series."""
         if rule.spec.trigger == "edge":
@@ -128,7 +149,7 @@ class EventDetector:
         return [self._to_event(session_id, rule, segment, source_fps) for segment in merged]  # step 6
 
     @staticmethod
-    def _rising_edges(rule: EventRule, series: list[PoseFrameSample]) -> list[Segment]:
+    def _rising_edges(rule: EventRule, series: list[PoseFrameSample | VoiceFrameSample]) -> list[Segment]:
         """
         `trigger: edge` steps 2-3: one zero-duration point per rising edge,
         instead of a sustained run -- see the module docstring.
@@ -162,7 +183,7 @@ class EventDetector:
         return kept
 
     @staticmethod
-    def _consecutive_runs(rule: EventRule, series: list[PoseFrameSample]) -> list[Segment]:
+    def _consecutive_runs(rule: EventRule, series: list[PoseFrameSample | VoiceFrameSample]) -> list[Segment]:
         """
         Steps 2-3: compare each frame against the rule, and collect the runs
         of consecutive matches.
@@ -188,7 +209,7 @@ class EventDetector:
         return runs
 
     @staticmethod
-    def _close_run(samples: list[PoseFrameSample]) -> Segment:
+    def _close_run(samples: list[PoseFrameSample | VoiceFrameSample]) -> Segment:
         """Freeze an accumulating run into a `Segment`."""
         return Segment(
             start_sec=samples[0].timestamp_sec,

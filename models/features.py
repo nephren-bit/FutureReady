@@ -144,6 +144,16 @@ class PoseFrameSample(BaseModel):
     visible_groups: list[LandmarkGroup] = Field(default_factory=list)
     signals: dict[str, float] = Field(default_factory=dict)
 
+    @property
+    def is_valid(self) -> bool:
+        """
+        Generic name `events/rules.py`'s `EventRule.matches` gates on --
+        `VoiceFrameSample` (below) exposes the same property over its own
+        `audio_analyzed` field, so one detector runs over either series
+        without knowing which analyzer produced it.
+        """
+        return self.pose_detected
+
 
 class PoseFeature(BaseModel):
     """
@@ -208,5 +218,81 @@ class PoseFeature(BaseModel):
                 "shoulder_tilt",
                 "turned_away_ratio",
             )
+            if getattr(self, name).measured
+        ]
+
+
+# ---------------------------------------------------------------------------
+# Voice (analyzers/voice_analyzer.py)
+# ---------------------------------------------------------------------------
+
+
+class VoiceFrameSample(BaseModel):
+    """
+    One windowed audio sample's worth of per-window signals -- the voice
+    analyzer's counterpart of `PoseFrameSample` above. Deliberately the same
+    shape (a timestamp plus a flat name -> value signal map) so
+    `events/detector.py`'s `EventRule`/`EventDetector` -- written generically
+    against "a series of timestamped samples exposing `.is_valid` and
+    `.signals`" -- runs over a `VoiceFeature.series` unchanged, with no
+    voice-specific branch anywhere in the detector.
+    """
+
+    timestamp_sec: float = 0.0
+    audio_analyzed: bool = False
+    signals: dict[str, float] = Field(default_factory=dict)
+
+    @property
+    def is_valid(self) -> bool:
+        return self.audio_analyzed
+
+
+class VoiceFeature(BaseModel):
+    """
+    Output of the voice analyzer (`analyzers/voice_analyzer.py`).
+
+    Mirrors `PoseFeature`'s shape on purpose (aggregates as `PoseMetric`,
+    `.metric(name)`, a `.series`) so the exact same `EventDetector` instance
+    that already ran against a session's `PoseFeature` can run again against
+    its `VoiceFeature` -- `services/self_practice_manager.py` just makes a
+    second `detect()` call and concatenates the two event lists. A rule
+    whose `requires_metrics` names a pose-only metric silently finds it
+    absent here (`metric()` returns `None`) and is skipped, and vice versa --
+    the existing "metric not measurable" gating already does the sorting
+    with no code written specifically for it.
+    """
+
+    profile: str = Field("", description="Context profile code used to compute these metrics.")
+    profile_version: str = Field("0.0.0", description="Version of that profile's threshold set.")
+
+    windows_analyzed: int = 0
+    source_fps: float = Field(
+        0.0,
+        description=(
+            "The source video's frame rate, carried over from `PoseFeature.source_fps` so "
+            "`report.value: frame` events can still point at a real video frame even though "
+            "nothing here ever looked at a video frame directly."
+        ),
+    )
+
+    silence_ratio: PoseMetric = Field(default_factory=PoseMetric)
+    low_volume_ratio: PoseMetric = Field(default_factory=PoseMetric)
+    filler_word_rate: PoseMetric = Field(default_factory=PoseMetric)
+
+    series: list[VoiceFrameSample] = Field(
+        default_factory=list,
+        description="Per-window time series, consumed by events/detector.py.",
+    )
+
+    def metric(self, name: str) -> PoseMetric | None:
+        """Look a metric up by its profile name, or `None` if there is no such metric."""
+        value = getattr(self, name, None)
+        return value if isinstance(value, PoseMetric) else None
+
+    def measured_metrics(self) -> list[str]:
+        """Names of every metric that actually came back with a value."""
+        return [
+            name
+            for name in ("silence_ratio", "low_volume_ratio", "filler_word_rate")
             if getattr(self, name).measured
         ]

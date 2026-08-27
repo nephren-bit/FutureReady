@@ -86,6 +86,27 @@ metrics:
     params:
       turned_width_ratio: 0.62
 
+  # Giọng nói (analyzers/voice_analyzer.py) -- không cần landmark nào cả,
+  # nên `required_landmark_groups: []` luôn luôn thoả; "đo được" hay không
+  # chỉ phụ thuộc việc video có trích được track âm thanh hay không (xem
+  # extractors/audio_extractor.py).
+  silence_ratio:
+    unit: "tỷ lệ 0-1"
+    required_landmark_groups: []
+    params:
+      silence_rms_floor: 0.01
+
+  low_volume_ratio:
+    unit: "tỷ lệ 0-1"
+    required_landmark_groups: []
+    params:
+      low_volume_relative_threshold: 0.4
+
+  filler_word_rate:
+    unit: "lần/phút"
+    required_landmark_groups: []
+    params: {}
+
 # Danh mục sự kiện đã khai báo.
 event_catalog:
   - E_HEAD_DOWN
@@ -96,6 +117,9 @@ event_catalog:
   - E_GESTURE
   - E_HEAD_UP
   - E_POSTURAL_SWAY_SPIKE
+  - E_LONG_SILENCE
+  - E_LOW_VOLUME
+  - E_FILLER_WORD
 
 # ---------------------------------------------------------------------------
 # Bộ ngưỡng — chuyển nguyên từ presentation_class, CHƯA hiệu chỉnh cho bối
@@ -224,3 +248,56 @@ events:
       value: frame
       unit: "khung hình"
     label_template: "Lắc lư tư thế trong {duration} giây"
+
+  # ---------------------------------------------------------------------
+  # Giọng nói (analyzers/voice_analyzer.py) -- ngưỡng TẠM/CHƯA KIỂM CHỨNG,
+  # y hệt tinh thần 3 sự kiện ở trên. `voice_silent`/`voice_low_volume` chỉ
+  # cần đo năng lượng âm thanh thô (luôn đo được nếu video có track âm
+  # thanh); `filler_word_active` cần nhận dạng giọng nói (Whisper, tiếng
+  # Việt, độ chính xác không cao) nên `E_FILLER_WORD` sẽ báo "không đo được"
+  # bất cứ khi nào `self_practice_manager.py` không bật bước này (video quá
+  # dài, nhận dạng lỗi...) -- không lặng lẽ báo 0 lần.
+  # ---------------------------------------------------------------------
+
+  E_LONG_SILENCE:
+    requires_metrics: [silence_ratio]
+    conditions:
+      - signal: voice_silent
+        comparison: at_least
+        threshold: 1.0
+    min_duration_sec: 3.0
+    merge_gap_sec: 1.0
+    report:
+      value: frame
+      unit: "khung hình"
+    label_template: "Im lặng kéo dài {duration} giây"
+
+  E_LOW_VOLUME:
+    requires_metrics: [low_volume_ratio]
+    conditions:
+      - signal: voice_low_volume
+        comparison: at_least
+        threshold: 1.0
+    min_duration_sec: 3.0
+    merge_gap_sec: 1.0
+    report:
+      value: frame
+      unit: "khung hình"
+    label_template: "Nói nhỏ trong {duration} giây"
+
+  E_FILLER_WORD:
+    requires_metrics: [filler_word_rate]
+    conditions:
+      - signal: filler_word_active
+        comparison: at_least
+        threshold: 1.0
+    trigger: edge
+    min_duration_sec: 0.0
+    # Cửa sổ đo là 0.5 giây (VoiceAnalyzer._WINDOW_SEC) nên 2 giây đủ để
+    # không đếm trùng một từ đệm bị Whisper cắt thành 2 mốc thời gian sát
+    # nhau, nhưng vẫn tách được 2 từ đệm nói cách nhau vài giây.
+    merge_gap_sec: 2.0
+    report:
+      value: frame
+      unit: "khung hình"
+    label_template: "Dùng từ đệm"

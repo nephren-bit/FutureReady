@@ -23,7 +23,7 @@ from __future__ import annotations
 import statistics
 from dataclasses import dataclass
 
-from models.features import PoseFeature, PoseFrameSample
+from models.features import PoseFeature, PoseFrameSample, VoiceFeature, VoiceFrameSample
 from models.profiles import ContextProfile, EventRuleSpec
 from utils.logger import get_logger
 
@@ -92,11 +92,11 @@ def format_number(value: float) -> str:
 
 @dataclass(frozen=True)
 class Segment:
-    """A run of consecutive matching frames, before it becomes an event."""
+    """A run of consecutive matching frames/windows, before it becomes an event."""
 
     start_sec: float
     end_sec: float
-    samples: tuple[PoseFrameSample, ...]
+    samples: tuple[PoseFrameSample | VoiceFrameSample, ...]
 
     @property
     def duration_sec(self) -> float:
@@ -130,35 +130,42 @@ class EventRule:
 
     # -- applicability ------------------------------------------------
 
-    def unmet_metrics(self, pose: PoseFeature) -> list[str]:
-        """Metrics this rule needs that did not come back measured for this recording."""
+    def unmet_metrics(self, feature: PoseFeature | VoiceFeature) -> list[str]:
+        """
+        Metrics this rule needs that did not come back measured for this
+        recording. `feature` is whichever analyzer's output this rule turns
+        out to belong to -- a rule naming a metric the other analyzer
+        produces just finds it absent here and reports it unmet, which is
+        exactly how it should be silently skipped for that feature.
+        """
         unmet: list[str] = []
         for name in self.spec.requires_metrics:
-            metric = pose.metric(name)
+            metric = feature.metric(name)
             if metric is None or not metric.measured:
                 unmet.append(name)
         return unmet
 
-    def applies_to(self, pose: PoseFeature) -> bool:
+    def applies_to(self, feature: PoseFeature | VoiceFeature) -> bool:
         """
         Whether this rule may run at all.
 
         A rule with no conditions never fires — that is how an uncalibrated
         profile stays silent instead of guessing.
         """
-        return bool(self.spec.conditions) and not self.unmet_metrics(pose)
+        return bool(self.spec.conditions) and not self.unmet_metrics(feature)
 
-    # -- per-frame evaluation -----------------------------------------
+    # -- per-frame/per-window evaluation --------------------------------
 
-    def matches(self, sample: PoseFrameSample) -> bool:
+    def matches(self, sample: PoseFrameSample | VoiceFrameSample) -> bool:
         """
-        Whether one frame satisfies every condition.
+        Whether one frame/window satisfies every condition.
 
-        A frame missing a signal the rule reads is *not* a match. The signal
-        is absent because that frame lacked the landmarks for it, and a rule
-        must never fire on data that was not there.
+        A sample missing a signal the rule reads is *not* a match. The
+        signal is absent because that sample lacked the landmarks (or, for
+        voice, the audio) for it, and a rule must never fire on data that
+        was not there.
         """
-        if not sample.pose_detected:
+        if not sample.is_valid:
             return False
         for condition in self.spec.conditions:
             value = sample.signals.get(condition.signal)

@@ -11,10 +11,12 @@ boundary; the other classes just log in before doing what they did before
 accounts existed.
 
 `VideoExtractor`/`PoseAnalyzer` are mocked (no real webcam footage in the
-test suite); `EventDetector` runs for real against the synthetic
-`presentation_solo` `PoseFeature` below, so this exercises the actual
-persistence path (`pose_to_orm`/`presentation_event_to_orm`) end to end,
-not just a mocked response shape.
+test suite), and so are `AudioExtractor`/`VoiceAnalyzer` (no real ffmpeg/
+Whisper dependency in the test suite either -- see tests/test_voice_analyzer.py
+for that). `EventDetector` runs for real against the synthetic
+`presentation_solo` `PoseFeature`/`VoiceFeature` below, so this exercises
+the actual persistence path (`pose_to_orm`/`presentation_event_to_orm`) end
+to end, not just a mocked response shape.
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ from sqlalchemy.orm import sessionmaker
 
 from db.base import Base
 from db.session import get_db
-from models.features import PoseFeature, PoseFrameSample, PoseMetric
+from models.features import PoseFeature, PoseFrameSample, PoseMetric, VoiceFeature, VoiceFrameSample
 from services.profile_loader import load_profile
 
 _NEUTRAL_SIGNALS = {
@@ -70,6 +72,24 @@ def _head_down_pose() -> PoseFeature:
     )
 
 
+def _long_silence_voice() -> VoiceFeature:
+    """A `presentation_solo` VoiceFeature whose series triggers E_LONG_SILENCE (>=3s silent)."""
+    series = []
+    for i in range(10):
+        signals = {"voice_silent": 1.0 if 2 <= i < 8 else 0.0}  # 3.0s silent run
+        series.append(VoiceFrameSample(timestamp_sec=float(i), audio_analyzed=True, signals=signals))
+
+    return VoiceFeature(
+        profile="presentation_solo",
+        profile_version=load_profile("presentation_solo").version,
+        windows_analyzed=len(series),
+        silence_ratio=PoseMetric.measure(0.6, "tỷ lệ 0-1"),
+        low_volume_ratio=PoseMetric.not_measured("tỷ lệ 0-1", "test double"),
+        filler_word_rate=PoseMetric.not_measured("lần/phút", "test double"),
+        series=series,
+    )
+
+
 class _FakeVideoExtractor:
     def __init__(self, *args, **kwargs) -> None:
         pass
@@ -84,6 +104,25 @@ class _FakePoseAnalyzer:
 
     def analyze(self, frames_with_timestamps, source_fps=0.0):
         return _head_down_pose()
+
+
+class _FakeAudioExtractor:
+    """Stands in for a real ffmpeg extraction -- no real video file in this test suite."""
+
+    def extract_with_samples(self, path):
+        import numpy as np
+
+        from extractors.audio_extractor import AudioTrackFeature
+
+        return AudioTrackFeature(duration_sec=10.0, sample_rate=16000), np.zeros(1, dtype=np.float32)
+
+
+class _FakeVoiceAnalyzer:
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+    def analyze(self, samples, sample_rate, duration_sec, source_fps=0.0, transcribe_fn=None):
+        return _long_silence_voice()
 
 
 @pytest.fixture()
@@ -116,6 +155,8 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "UPLOAD_DIR", tmp_path / "uploads_self_practice")
     monkeypatch.setattr(manager_module, "VideoExtractor", _FakeVideoExtractor)
     monkeypatch.setattr(manager_module, "PoseAnalyzer", _FakePoseAnalyzer)
+    monkeypatch.setattr(manager_module, "AudioExtractor", _FakeAudioExtractor)
+    monkeypatch.setattr(manager_module, "VoiceAnalyzer", _FakeVoiceAnalyzer)
 
     with TestClient(app_module.app) as test_client:
         yield test_client
@@ -188,6 +229,10 @@ class TestSelfPracticeSessionLifecycle:
         final = client.get(f"/self-practice/{session_id}", headers=_auth(token)).json()
         assert final["pose_feature"] is not None
         assert any(event["type"] == "E_HEAD_DOWN" for event in final["events"])
+        # The voice pass (AudioExtractor -> VoiceAnalyzer -> the same
+        # EventDetector run again, see self_practice_manager._detect_voice_events)
+        # persists into the same events list, right alongside the pose ones.
+        assert any(event["type"] == "E_LONG_SILENCE" for event in final["events"])
 
     def test_a_profile_outside_the_self_practice_set_is_rejected(self, client, tmp_path):
         token = _register(client)
