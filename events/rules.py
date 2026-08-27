@@ -79,12 +79,15 @@ def assert_descriptive(event_code: str, template: str) -> None:
 
 
 def format_number(value: float) -> str:
-    """Format a number the way it is read in Vietnamese: `4,2` rather than `4.2`."""
-    rounded = round(value, 1)
-    text = f"{rounded:.1f}"
-    if text.endswith(".0"):
-        text = text[:-2]
-    return text.replace(".", ",")
+    """
+    Format a number for a label: a plain whole number, no decimal point.
+
+    A duration like "135,2 giây" is precise but not more useful to a
+    reviewer than "135 giây" -- every `min_duration_sec` in this codebase is
+    several seconds, so rounding to the nearest second never collapses a
+    real event down to "0 giây".
+    """
+    return str(round(value))
 
 
 @dataclass(frozen=True)

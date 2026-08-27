@@ -28,6 +28,7 @@ export interface PoseFeature {
   pose_detected_ratio: number
   sampling_rate_hz: number
   sampling_warning?: string | null
+  source_fps: number
   head_up_ratio: PoseMetric
   postural_sway: PoseMetric
   movement_range: PoseMetric

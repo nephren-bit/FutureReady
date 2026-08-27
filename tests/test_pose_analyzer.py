@@ -435,8 +435,9 @@ class TestLabelDiscipline:
     def test_a_descriptive_template_passes(self) -> None:
         assert_descriptive("E_TEST", "Khoảng lặng {duration} giây")
 
-    def test_numbers_are_formatted_the_vietnamese_way(self) -> None:
-        assert format_number(4.24) == "4,2"
+    def test_numbers_are_formatted_as_plain_whole_numbers(self) -> None:
+        assert format_number(4.24) == "4"
+        assert format_number(4.6) == "5"
         assert format_number(12.0) == "12"
 
     def test_every_shipped_profile_has_descriptive_labels(self) -> None:
